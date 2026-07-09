@@ -5,14 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Cinema Tracker</title>
     <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#1e3c72">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="My Cinema">
+    <meta name="theme-color" content="#1e3c72">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="My Cinema">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
+    <!-- Pull to refresh indicator -->
+    <div id="pull-refresh-indicator" class="pull-refresh-indicator">
+        <div class="spinner"></div>
+        <span>Release to refresh...</span>
+    </div>
+
+    <div class="container" id="main-container">
         <header>
             <h1>🎬 My Cinema Tracker</h1>
             <nav>
@@ -24,7 +30,7 @@
             </nav>
         </header>
 
-             <!-- MY LIST TAB -->
+        <!-- MY LIST TAB -->
         <div class="tab-content active" id="my-list">
             <div class="filters">
                 <button class="filter-btn active" data-filter="all">All</button>
@@ -35,8 +41,14 @@
             </div>
             
             <!-- Continue Watching Section -->
-            <div id="continue-watching-section" style="display:none; margin-bottom: 30px;">
+            <div id="continue-watching-section" style="display:none;">
                 <h2 style="margin-bottom: 15px; color: #1e3c72;">▶️ Continue Watching</h2>
+                
+                <!-- Watch History (Recently Watched - Faded) -->
+                <div id="watch-history-header" class="history-header" style="display:none;">
+                    <div class="history-divider">WATCH HISTORY</div>
+                </div>
+                
                 <div id="continue-watching-list"></div>
             </div>
             
@@ -44,11 +56,11 @@
                 <p class="empty-state">Your list is empty. Search for shows/movies to add!</p>
             </div>
         </div>
-                <!-- CALENDAR TAB -->
+
+        <!-- CALENDAR TAB -->
         <div class="tab-content" id="calendar">
             <h2 style="margin-bottom: 20px; color: #1e3c72;">📅 Upcoming Episodes</h2>
             
-            <!-- Today Section -->
             <div class="calendar-section">
                 <h3 class="calendar-heading">Today</h3>
                 <div id="calendar-today" class="calendar-list">
@@ -56,7 +68,6 @@
                 </div>
             </div>
             
-            <!-- This Week Section -->
             <div class="calendar-section">
                 <h3 class="calendar-heading">This Week</h3>
                 <div id="calendar-week" class="calendar-list">
@@ -64,7 +75,6 @@
                 </div>
             </div>
             
-            <!-- Upcoming Section -->
             <div class="calendar-section">
                 <h3 class="calendar-heading">Upcoming</h3>
                 <div id="calendar-upcoming" class="calendar-list">
@@ -76,6 +86,7 @@
                 🔄 Refresh Calendar
             </button>
         </div>
+
         <!-- SEARCH TAB -->
         <div class="tab-content" id="search">
             <div class="search-container">
@@ -131,7 +142,7 @@
         </div>
     </div>
 
-    <!-- MODAL FOR EPISODE TRACKING -->
+    <!-- MODAL FOR DETAILS -->
     <div id="modal" class="modal">
         <div class="modal-content">
             <span class="close">&times;</span>
@@ -139,7 +150,19 @@
         </div>
     </div>
 
-    <!-- Firebase & App Scripts -->
+    <!-- Confirmation Dialog -->
+    <div id="confirm-dialog" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width: 400px; text-align: center;">
+            <h3 id="confirm-title" style="margin-bottom: 15px;"></h3>
+            <p id="confirm-message" style="margin-bottom: 20px; color: #666;"></p>
+            <div style="display: flex; gap: 10px; justify-content: center;">
+                <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
+                <button id="confirm-no" class="confirm-btn confirm-no">No</button>
+                <button id="confirm-cancel" class="confirm-btn" style="display:none;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="app.js"></script>
 </body>
 </html>
