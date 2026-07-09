@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,109 +13,305 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
-    <!-- Pull to refresh indicator -->
+
+    <!-- Pull to refresh -->
     <div id="pull-refresh-indicator" class="pull-refresh-indicator">
         <div class="spinner"></div>
         <span>Release to refresh...</span>
     </div>
 
-    <div class="container" id="main-container">
-        <header>
-            <h1>🎬 My Cinema Tracker</h1>
-            <nav>
-                <button class="tab-btn active" data-tab="my-list">My List</button>
-                <button class="tab-btn" data-tab="calendar">Calendar</button>
-                <button class="tab-btn" data-tab="search">Search</button>
-                <button class="tab-btn" data-tab="import">Import Data</button>
-                <button class="tab-btn" data-tab="stats">Stats</button>
-            </nav>
-        </header>
-
-        <!-- MY LIST TAB -->
-        <div class="tab-content active" id="my-list">
-            <div class="filters">
-                <button class="filter-btn active" data-filter="all">All</button>
-                <button class="filter-btn" data-filter="continue">Continue Watching</button>
-                <button class="filter-btn" data-filter="tv">TV Shows</button>
-                <button class="filter-btn" data-filter="movie">Movies</button>
-                <button class="filter-btn" data-filter="favorites">Favorites ⭐</button>
-            </div>
-            
-            <div id="continue-watching-section" style="display:none;">
-                <h2 style="margin-bottom: 15px; color: #1e3c72;">▶️ Continue Watching</h2>
-                <div id="watch-history-header" class="history-header" style="display:none;">
-                    <div class="history-divider">WATCH HISTORY</div>
-                </div>
-                <div id="continue-watching-list"></div>
-            </div>
-            
-            <div id="my-list-content" class="media-grid">
-                <p class="empty-state">Your list is empty. Search for shows/movies to add!</p>
+    <!-- TOP SEARCH BAR -->
+    <div class="top-bar">
+        <div class="top-bar-inner">
+            <span class="app-logo">🎬</span>
+            <div class="top-search-wrap">
+                <input type="text" id="search-input" placeholder="Search movies, shows, anime...">
+                <button id="search-btn">🔍</button>
             </div>
         </div>
+    </div>
 
-        <!-- CALENDAR TAB -->
-        <div class="tab-content" id="calendar">
-            <h2 style="margin-bottom: 20px; color: #1e3c72;">📅 Upcoming Episodes</h2>
-            <div class="calendar-section">
-                <h3 class="calendar-heading">Today</h3>
-                <div id="calendar-today" class="calendar-list"><p class="empty-state">Loading...</p></div>
-            </div>
-            <div class="calendar-section">
-                <h3 class="calendar-heading">This Week</h3>
-                <div id="calendar-week" class="calendar-list"><p class="empty-state">Loading...</p></div>
-            </div>
-            <div class="calendar-section">
-                <h3 class="calendar-heading">Upcoming</h3>
-                <div id="calendar-upcoming" class="calendar-list"><p class="empty-state">Loading...</p></div>
-            </div>
-            <button id="refresh-calendar-btn" style="margin-top: 20px; padding: 12px 24px; background: #1e3c72; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
-                🔄 Refresh Calendar
-            </button>
-        </div>
-
-        <!-- SEARCH TAB -->
-        <div class="tab-content" id="search">
-            <div class="search-container">
-                <input type="text" id="search-input" placeholder="Search for movies or TV shows...">
-                <button id="search-btn">Search</button>
-            </div>
-            <div class="filters">
+    <!-- SEARCH OVERLAY -->
+    <div id="search-overlay" class="search-overlay" style="display:none;">
+        <div class="search-overlay-header">
+            <button id="close-search-btn" class="close-search-btn">← Back</button>
+            <div class="search-filter-row">
                 <button class="search-filter-btn active" data-type="multi">All</button>
-                <button class="search-filter-btn" data-type="tv">TV Shows</button>
+                <button class="search-filter-btn" data-type="tv">TV</button>
                 <button class="search-filter-btn" data-type="movie">Movies</button>
+                <button class="search-filter-btn" data-type="anime">Anime</button>
             </div>
-            <div id="search-results" class="media-grid"></div>
+        </div>
+        <div id="search-results" class="media-grid search-grid"></div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="main-content" id="main-container">
+
+        <!-- ===== ANIME SECTION ===== -->
+        <div class="section-page active" id="page-anime">
+            <div class="section-sub-tabs">
+                <button class="sub-tab-btn active" data-subtab="anime-continue">Continue</button>
+                <button class="sub-tab-btn" data-subtab="anime-history">History</button>
+                <button class="sub-tab-btn" data-subtab="anime-upcoming">Upcoming</button>
+                <button class="sub-tab-btn" data-subtab="anime-library">Library</button>
+            </div>
+
+            <div class="sub-tab-content active" id="anime-continue">
+                <div id="anime-watch-history-area"></div>
+                <div id="anime-continue-list"></div>
+            </div>
+            <div class="sub-tab-content" id="anime-history">
+                <div id="anime-history-list"></div>
+            </div>
+            <div class="sub-tab-content" id="anime-upcoming">
+                <h3 class="section-heading">📅 Upcoming Anime Episodes</h3>
+                <div id="anime-calendar-today" class="calendar-list"><p class="empty-state">Click refresh to load.</p></div>
+                <h3 class="section-heading" style="margin-top:20px;">This Week</h3>
+                <div id="anime-calendar-week" class="calendar-list"></div>
+                <h3 class="section-heading" style="margin-top:20px;">Upcoming</h3>
+                <div id="anime-calendar-upcoming" class="calendar-list"></div>
+                <button class="refresh-btn" onclick="loadSectionCalendar('anime')">🔄 Refresh</button>
+            </div>
+            <div class="sub-tab-content" id="anime-library">
+                <div class="library-controls">
+                    <select id="anime-sort" onchange="renderLibrary('anime')">
+                        <option value="title">A-Z</option>
+                        <option value="rating">Rating</option>
+                        <option value="recent">Recently Added</option>
+                        <option value="progress">Progress</option>
+                    </select>
+                    <select id="anime-filter" onchange="renderLibrary('anime')">
+                        <option value="all">All</option>
+                        <option value="Watching">Watching</option>
+                        <option value="Up to Date">Up to Date</option>
+                        <option value="Finished">Finished</option>
+                        <option value="Paused">Paused</option>
+                        <option value="Dropped">Dropped</option>
+                        <option value="Planned">Planned</option>
+                    </select>
+                </div>
+                <div id="anime-library-grid" class="media-grid"></div>
+            </div>
         </div>
 
-        <!-- IMPORT TAB -->
-        <div class="tab-content" id="import">
-            <div class="import-section">
-                <h2>Import Your Watch History</h2>
+        <!-- ===== TV SHOWS SECTION ===== -->
+        <div class="section-page" id="page-tv">
+            <div class="section-sub-tabs">
+                <button class="sub-tab-btn active" data-subtab="tv-continue">Continue</button>
+                <button class="sub-tab-btn" data-subtab="tv-history">History</button>
+                <button class="sub-tab-btn" data-subtab="tv-upcoming">Upcoming</button>
+                <button class="sub-tab-btn" data-subtab="tv-library">Library</button>
+            </div>
+
+            <div class="sub-tab-content active" id="tv-continue">
+                <div id="tv-watch-history-area"></div>
+                <div id="tv-continue-list"></div>
+            </div>
+            <div class="sub-tab-content" id="tv-history">
+                <div id="tv-history-list"></div>
+            </div>
+            <div class="sub-tab-content" id="tv-upcoming">
+                <h3 class="section-heading">📅 Upcoming TV Episodes</h3>
+                <div id="tv-calendar-today" class="calendar-list"><p class="empty-state">Click refresh to load.</p></div>
+                <h3 class="section-heading" style="margin-top:20px;">This Week</h3>
+                <div id="tv-calendar-week" class="calendar-list"></div>
+                <h3 class="section-heading" style="margin-top:20px;">Upcoming</h3>
+                <div id="tv-calendar-upcoming" class="calendar-list"></div>
+                <button class="refresh-btn" onclick="loadSectionCalendar('tv')">🔄 Refresh</button>
+            </div>
+            <div class="sub-tab-content" id="tv-library">
+                <div class="library-controls">
+                    <select id="tv-sort" onchange="renderLibrary('tv')">
+                        <option value="title">A-Z</option>
+                        <option value="rating">Rating</option>
+                        <option value="recent">Recently Added</option>
+                        <option value="progress">Progress</option>
+                    </select>
+                    <select id="tv-filter" onchange="renderLibrary('tv')">
+                        <option value="all">All</option>
+                        <option value="Watching">Watching</option>
+                        <option value="Up to Date">Up to Date</option>
+                        <option value="Finished">Finished</option>
+                        <option value="Paused">Paused</option>
+                        <option value="Dropped">Dropped</option>
+                        <option value="Planned">Planned</option>
+                    </select>
+                </div>
+                <div id="tv-library-grid" class="media-grid"></div>
+            </div>
+        </div>
+
+        <!-- ===== MOVIES SECTION ===== -->
+        <div class="section-page" id="page-movies">
+            <div class="section-sub-tabs">
+                <button class="sub-tab-btn active" data-subtab="movies-watched">Watched</button>
+                <button class="sub-tab-btn" data-subtab="movies-unwatched">Unwatched</button>
+                <button class="sub-tab-btn" data-subtab="movies-library">Library</button>
+            </div>
+
+            <div class="sub-tab-content active" id="movies-watched">
+                <div id="movies-watched-list" class="media-grid"></div>
+            </div>
+            <div class="sub-tab-content" id="movies-unwatched">
+                <div id="movies-unwatched-list" class="media-grid"></div>
+            </div>
+            <div class="sub-tab-content" id="movies-library">
+                <div class="library-controls">
+                    <select id="movies-sort" onchange="renderLibrary('movies')">
+                        <option value="title">A-Z</option>
+                        <option value="rating">Rating</option>
+                        <option value="recent">Recently Added</option>
+                        <option value="year">Year</option>
+                    </select>
+                    <select id="movies-filter" onchange="renderLibrary('movies')">
+                        <option value="all">All</option>
+                        <option value="watched">Watched</option>
+                        <option value="unwatched">Unwatched</option>
+                        <option value="favorites">Favorites</option>
+                    </select>
+                </div>
+                <div id="movies-library-grid" class="media-grid"></div>
+            </div>
+        </div>
+
+        <!-- ===== PROFILE SECTION ===== -->
+        <div class="section-page" id="page-profile">
+            <div class="profile-banner">
+                <div class="profile-avatar">🎬</div>
+                <h2 class="profile-name">My Cinema</h2>
+            </div>
+
+            <!-- Summary Blocks -->
+            <div class="profile-blocks">
+                <div class="profile-block anime-block" onclick="switchSection('anime'); switchSubTab('anime-library')">
+                    <div class="profile-block-header">
+                        <span class="profile-block-icon">🎌</span>
+                        <span class="profile-block-title">Anime</span>
+                        <span class="profile-block-arrow">→</span>
+                    </div>
+                    <div class="profile-block-stats">
+                        <div class="profile-stat"><span id="p-anime-watched">0</span><small>Watched</small></div>
+                        <div class="profile-stat"><span id="p-anime-total">0</span><small>Total</small></div>
+                        <div class="profile-stat"><span id="p-anime-eps">0</span><small>Episodes</small></div>
+                        <div class="profile-stat"><span id="p-anime-time">0h</span><small>Watch Time</small></div>
+                    </div>
+                    <div class="profile-block-bar">
+                        <div class="profile-block-fill anime-fill" id="p-anime-bar" style="width:0%"></div>
+                    </div>
+                    <div class="profile-block-posters" id="p-anime-posters"></div>
+                </div>
+
+                <div class="profile-block tv-block" onclick="switchSection('tv'); switchSubTab('tv-library')">
+                    <div class="profile-block-header">
+                        <span class="profile-block-icon">📺</span>
+                        <span class="profile-block-title">TV Shows</span>
+                        <span class="profile-block-arrow">→</span>
+                    </div>
+                    <div class="profile-block-stats">
+                        <div class="profile-stat"><span id="p-tv-watched">0</span><small>Finished</small></div>
+                        <div class="profile-stat"><span id="p-tv-total">0</span><small>Total</small></div>
+                        <div class="profile-stat"><span id="p-tv-eps">0</span><small>Episodes</small></div>
+                        <div class="profile-stat"><span id="p-tv-time">0h</span><small>Watch Time</small></div>
+                    </div>
+                    <div class="profile-block-bar">
+                        <div class="profile-block-fill tv-fill" id="p-tv-bar" style="width:0%"></div>
+                    </div>
+                    <div class="profile-block-posters" id="p-tv-posters"></div>
+                </div>
+
+                <div class="profile-block movies-block" onclick="switchSection('movies'); switchSubTab('movies-library')">
+                    <div class="profile-block-header">
+                        <span class="profile-block-icon">🎬</span>
+                        <span class="profile-block-title">Movies</span>
+                        <span class="profile-block-arrow">→</span>
+                    </div>
+                    <div class="profile-block-stats">
+                        <div class="profile-stat"><span id="p-movies-watched">0</span><small>Watched</small></div>
+                        <div class="profile-stat"><span id="p-movies-total">0</span><small>Total</small></div>
+                        <div class="profile-stat"><span id="p-movies-rewatched">0</span><small>Rewatched</small></div>
+                        <div class="profile-stat"><span id="p-movies-time">0h</span><small>Watch Time</small></div>
+                    </div>
+                    <div class="profile-block-bar">
+                        <div class="profile-block-fill movies-fill" id="p-movies-bar" style="width:0%"></div>
+                    </div>
+                    <div class="profile-block-posters" id="p-movies-posters"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== SETTINGS SECTION ===== -->
+        <div class="section-page" id="page-settings">
+            <h2 class="settings-title">⚙️ Settings</h2>
+
+            <div class="settings-group">
+                <h3>Appearance</h3>
+                <div class="settings-row">
+                    <span>Dark Mode</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="dark-mode-toggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>Import Data</h3>
                 <div class="import-box">
-                    <h3>Import Movies</h3>
+                    <h4>Import Movies</h4>
                     <textarea id="movies-json" placeholder="Paste your movies JSON here..."></textarea>
                     <button id="import-movies-btn">Import Movies</button>
                 </div>
                 <div class="import-box">
-                    <h3>Import TV Shows</h3>
+                    <h4>Import TV Shows & Anime</h4>
                     <textarea id="series-json" placeholder="Paste your series JSON here..."></textarea>
                     <button id="import-series-btn">Import TV Shows</button>
                 </div>
                 <div id="import-status"></div>
             </div>
-        </div>
 
-        <!-- STATS TAB -->
-        <div class="tab-content" id="stats">
-            <div class="stats-grid">
-                <div class="stat-card"><h3>Total Movies</h3><p class="stat-number" id="total-movies">0</p></div>
-                <div class="stat-card"><h3>Total TV Shows</h3><p class="stat-number" id="total-shows">0</p></div>
-                <div class="stat-card"><h3>Episodes Watched</h3><p class="stat-number" id="total-episodes">0</p></div>
-                <div class="stat-card"><h3>Favorites</h3><p class="stat-number" id="total-favorites">0</p></div>
+            <div class="settings-group">
+                <h3>Export Data</h3>
+                <p style="color:#666; font-size:14px; margin-bottom:12px;">Export your library in your preferred format.</p>
+                <div class="export-buttons">
+                    <button class="export-btn" onclick="exportData('json')">📄 Export as JSON</button>
+                    <button class="export-btn" onclick="exportData('csv')">📊 Export as CSV</button>
+                    <button class="export-btn" onclick="exportData('txt')">📝 Export as TXT</button>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>About</h3>
+                <p style="color:#666; font-size:14px;">My Cinema Tracker v3.0</p>
+                <p style="color:#666; font-size:14px;">Built with TMDB & Firebase</p>
             </div>
         </div>
-    </div>
+
+    </div><!-- end main-content -->
+
+    <!-- BOTTOM NAV -->
+    <nav class="bottom-nav">
+        <button class="nav-btn active" data-section="anime">
+            <span class="nav-icon">🎌</span>
+            <span class="nav-label">Anime</span>
+        </button>
+        <button class="nav-btn" data-section="tv">
+            <span class="nav-icon">📺</span>
+            <span class="nav-label">TV Shows</span>
+        </button>
+        <button class="nav-btn" data-section="movies">
+            <span class="nav-icon">🎬</span>
+            <span class="nav-label">Movies</span>
+        </button>
+        <button class="nav-btn" data-section="profile">
+            <span class="nav-icon">👤</span>
+            <span class="nav-label">Profile</span>
+        </button>
+        <button class="nav-btn" data-section="settings">
+            <span class="nav-icon">⚙️</span>
+            <span class="nav-label">Settings</span>
+        </button>
+    </nav>
 
     <!-- MAIN DETAIL MODAL -->
     <div id="modal" class="modal">
@@ -133,12 +329,20 @@
         </div>
     </div>
 
+    <!-- PREVIEW MODAL (for search/similar results) -->
+    <div id="preview-modal" class="modal">
+        <div class="modal-content detail-modal">
+            <span class="close" onclick="document.getElementById('preview-modal').style.display='none'">&times;</span>
+            <div id="preview-modal-body"></div>
+        </div>
+    </div>
+
     <!-- Confirmation Dialog -->
     <div id="confirm-dialog" class="modal" style="display:none;">
-        <div class="modal-content" style="max-width: 400px; text-align: center;">
-            <h3 id="confirm-title" style="margin-bottom: 15px;"></h3>
-            <p id="confirm-message" style="margin-bottom: 20px; color: #666;"></p>
-            <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+        <div class="modal-content" style="max-width:400px; text-align:center;">
+            <h3 id="confirm-title" style="margin-bottom:15px;"></h3>
+            <p id="confirm-message" style="margin-bottom:20px; color:#666;"></p>
+            <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
                 <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
                 <button id="confirm-no" class="confirm-btn confirm-no">No</button>
                 <button id="confirm-cancel" class="confirm-btn" style="display:none;">Cancel</button>
