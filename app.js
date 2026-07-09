@@ -831,8 +831,14 @@ async function quickMarkWatched(docId, seasonNum, episodeNum) {
     await toggleEpisode(docId, seasonNum, episodeNum);
     displayContinueWatching(); // Refresh the continue watching list
 }
+// Calendar cache
+let calendarCache = {
+    lastUpdated: null,
+    data: { today: [], week: [], upcoming: [] }
+};
+
 // Load Calendar
-async function loadCalendar() {
+async function loadCalendar(forceRefresh = false) {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     
@@ -848,9 +854,20 @@ async function loadCalendar() {
     const weekContainer = document.getElementById('calendar-week');
     const upcomingContainer = document.getElementById('calendar-upcoming');
     
-    todayContainer.innerHTML = '<p class="empty-state">Loading...</p>';
-    weekContainer.innerHTML = '<p class="empty-state">Loading...</p>';
-    upcomingContainer.innerHTML = '<p class="empty-state">Loading...</p>';
+    // Check cache (refresh every 6 hours)
+    const cacheAge = calendarCache.lastUpdated ? Date.now() - calendarCache.lastUpdated : Infinity;
+    const sixHours = 6 * 60 * 60 * 1000;
+    
+    if (!forceRefresh && cacheAge < sixHours && calendarCache.data.today.length + calendarCache.data.week.length + calendarCache.data.upcoming.length > 0) {
+        displayCalendarSection(todayContainer, calendarCache.data.today, true);
+        displayCalendarSection(weekContainer, calendarCache.data.week, false);
+        displayCalendarSection(upcomingContainer, calendarCache.data.upcoming, false);
+        return;
+    }
+    
+    todayContainer.innerHTML = '<p class="empty-state">Checking your shows...</p>';
+    weekContainer.innerHTML = '<p class="empty-state">Checking your shows...</p>';
+    upcomingContainer.innerHTML = '<p class="empty-state">Checking your shows...</p>';
     
     const todayEpisodes = [];
     const weekEpisodes = [];
@@ -859,41 +876,60 @@ async function loadCalendar() {
     // Get all TV shows with TMDB IDs
     const tvShows = myList.filter(item => item.type === 'tv' && item.tmdb_id);
     
+    let checked = 0;
+    const total = tvShows.length;
+    
     for (const show of tvShows) {
         try {
+            checked++;
+            todayContainer.innerHTML = `<p class="empty-state">Checking shows... ${checked}/${total}</p>`;
+            
             // Get show details from TMDB
             const detailsUrl = `${TMDB_BASE_URL}/tv/${show.tmdb_id}?api_key=${TMDB_API_KEY}`;
             const response = await fetch(detailsUrl);
             const details = await response.json();
             
-            if (details.next_episode_to_air) {
-                const airDate = details.next_episode_to_air.air_date;
-                const episode = {
-                    show: show.title,
-                    poster: show.poster,
-                    docId: show.docId,
-                    season: details.next_episode_to_air.season_number,
-                    episode: details.next_episode_to_air.episode_number,
-                    name: details.next_episode_to_air.name,
-                    airDate: airDate,
-                    airDateObj: new Date(airDate)
-                };
-                
-                if (airDate === todayStr) {
-                    todayEpisodes.push(episode);
-                } else if (airDate > todayStr && airDate <= weekStr) {
-                    weekEpisodes.push(episode);
-                } else if (airDate > weekStr && airDate <= monthStr) {
-                    upcomingEpisodes.push(episode);
+            // Only process if show is still airing or returning
+            if (details.status === 'Returning Series' || details.status === 'In Production') {
+                if (details.next_episode_to_air) {
+                    const airDate = details.next_episode_to_air.air_date;
+                    const episode = {
+                        show: show.title,
+                        poster: show.poster,
+                        docId: show.docId,
+                        season: details.next_episode_to_air.season_number,
+                        episode: details.next_episode_to_air.episode_number,
+                        name: details.next_episode_to_air.name,
+                        airDate: airDate,
+                        airDateObj: new Date(airDate)
+                    };
+                    
+                    if (airDate === todayStr) {
+                        todayEpisodes.push(episode);
+                    } else if (airDate > todayStr && airDate <= weekStr) {
+                        weekEpisodes.push(episode);
+                    } else if (airDate > weekStr && airDate <= monthStr) {
+                        upcomingEpisodes.push(episode);
+                    }
                 }
             }
             
             // Small delay to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 250));
+            await new Promise(resolve => setTimeout(resolve, 300));
         } catch (error) {
             console.error('Error fetching calendar for:', show.title, error);
         }
     }
+    
+    // Cache results
+    calendarCache = {
+        lastUpdated: Date.now(),
+        data: {
+            today: todayEpisodes,
+            week: weekEpisodes,
+            upcoming: upcomingEpisodes
+        }
+    };
     
     // Display results
     displayCalendarSection(todayContainer, todayEpisodes, true);
@@ -919,7 +955,7 @@ function displayCalendarSection(container, episodes, isToday) {
         const dateStr = formatAirDate(ep.airDateObj);
         
         return `
-            <div class="calendar-item ${isToday ? 'airing-today' : ''}" onclick="openDetails('${ep.docId}', 'tv')">
+            <div class="calendar-item ${isToday ? 'airing-today' : ''}" onclick="openDetails('${ep.docId}', 'tv')" style="cursor: pointer;">
                 <img src="${poster}" alt="${ep.show}" onerror="this.src='https://via.placeholder.com/60x90?text=No+Image'">
                 <div class="calendar-item-info">
                     <h4>${ep.show}</h4>
@@ -935,7 +971,6 @@ function displayCalendarSection(container, episodes, isToday) {
         `;
     }).join('');
 }
-
 // Format air date
 function formatAirDate(date) {
     const today = new Date();
