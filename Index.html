@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Cinema Tracker</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 My Cinema Tracker</h1>
+            <nav>
+                <button class="tab-btn active" data-tab="my-list">My List</button>
+                <button class="tab-btn" data-tab="search">Search</button>
+                <button class="tab-btn" data-tab="import">Import Data</button>
+                <button class="tab-btn" data-tab="stats">Stats</button>
+            </nav>
+        </header>
+
+        <!-- MY LIST TAB -->
+        <div class="tab-content active" id="my-list">
+            <div class="filters">
+                <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="tv">TV Shows</button>
+                <button class="filter-btn" data-filter="movie">Movies</button>
+                <button class="filter-btn" data-filter="favorites">Favorites ⭐</button>
+            </div>
+            <div id="my-list-content" class="media-grid">
+                <p class="empty-state">Your list is empty. Search for shows/movies to add!</p>
+            </div>
+        </div>
+
+        <!-- SEARCH TAB -->
+        <div class="tab-content" id="search">
+            <div class="search-container">
+                <input type="text" id="search-input" placeholder="Search for movies or TV shows...">
+                <button id="search-btn">Search</button>
+            </div>
+            <div class="filters">
+                <button class="search-filter-btn active" data-type="multi">All</button>
+                <button class="search-filter-btn" data-type="tv">TV Shows</button>
+                <button class="search-filter-btn" data-type="movie">Movies</button>
+            </div>
+            <div id="search-results" class="media-grid"></div>
+        </div>
+
+        <!-- IMPORT TAB -->
+        <div class="tab-content" id="import">
+            <div class="import-section">
+                <h2>Import Your Watch History</h2>
+                <div class="import-box">
+                    <h3>Import Movies</h3>
+                    <textarea id="movies-json" placeholder="Paste your movies JSON here..."></textarea>
+                    <button id="import-movies-btn">Import Movies</button>
+                </div>
+                <div class="import-box">
+                    <h3>Import TV Shows</h3>
+                    <textarea id="series-json" placeholder="Paste your series JSON here..."></textarea>
+                    <button id="import-series-btn">Import TV Shows</button>
+                </div>
+                <div id="import-status"></div>
+            </div>
+        </div>
+
+        <!-- STATS TAB -->
+        <div class="tab-content" id="stats">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Total Movies</h3>
+                    <p class="stat-number" id="total-movies">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Total TV Shows</h3>
+                    <p class="stat-number" id="total-shows">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Episodes Watched</h3>
+                    <p class="stat-number" id="total-episodes">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Favorites</h3>
+                    <p class="stat-number" id="total-favorites">0</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL FOR EPISODE TRACKING -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Firebase & App Scripts -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>
