@@ -66,8 +66,7 @@ function setupEventListeners() {
     document.getElementById('import-series-btn').addEventListener('click', importSeries);
         
     // Calendar refresh
-    document.getElementById('refresh-calendar-btn').addEventListener('click', loadCalendar);
-    
+document.getElementById('refresh-calendar-btn').addEventListener('click', () => loadCalendar(true));    
     // Tab change - load calendar when calendar tab is clicked
     document.querySelectorAll('.tab-btn').forEach(btn => {
         if (btn.dataset.tab === 'calendar') {
