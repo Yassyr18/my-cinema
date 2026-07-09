@@ -23,19 +23,26 @@
             </nav>
         </header>
 
-        <!-- MY LIST TAB -->
+             <!-- MY LIST TAB -->
         <div class="tab-content active" id="my-list">
             <div class="filters">
                 <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="continue">Continue Watching</button>
                 <button class="filter-btn" data-filter="tv">TV Shows</button>
                 <button class="filter-btn" data-filter="movie">Movies</button>
                 <button class="filter-btn" data-filter="favorites">Favorites ⭐</button>
             </div>
+            
+            <!-- Continue Watching Section -->
+            <div id="continue-watching-section" style="display:none; margin-bottom: 30px;">
+                <h2 style="margin-bottom: 15px; color: #1e3c72;">▶️ Continue Watching</h2>
+                <div id="continue-watching-list"></div>
+            </div>
+            
             <div id="my-list-content" class="media-grid">
                 <p class="empty-state">Your list is empty. Search for shows/movies to add!</p>
             </div>
         </div>
-
         <!-- SEARCH TAB -->
         <div class="tab-content" id="search">
             <div class="search-container">
