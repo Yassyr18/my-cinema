@@ -477,4 +477,204 @@ async function importMovies() {
                 if (movie.id.imdb) {
                     try {
                         const searchUrl = `${TMDB_BASE_URL}/find/${movie.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
-                        const 
+                        const response = await fetch(searchUrl);
+                        const data = await response.json();
+                        if (data.movie_results && data.movie_results.length > 0) {
+                            tmdbId = data.movie_results[0].id;
+                            poster = data.movie_results[0].poster_path ? `${TMDB_IMG_BASE}${data.movie_results[0].poster_path}` : poster;
+                        }
+                    } catch (e) {
+                        console.warn('TMDB lookup failed for:', movie.title);
+                    }
+                }
+
+                // If no IMDB result, try searching by title
+                if (!tmdbId && movie.title) {
+                    try {
+                        const searchUrl = `${TMDB_BASE_URL}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(movie.title)}&year=${movie.year}`;
+                        const response = await fetch(searchUrl);
+                        const data = await response.json();
+                        if (data.results && data.results.length > 0) {
+                            tmdbId = data.results[0].id;
+                            poster = data.results[0].poster_path ? `${TMDB_IMG_BASE}${data.results[0].poster_path}` : poster;
+                        }
+                    } catch (e) {
+                        console.warn('TMDB search failed for:', movie.title);
+                    }
+                }
+
+                await setDoc(doc(db, 'movies', docId), {
+                    tmdb_id: tmdbId,
+                    imdb_id: movie.id.imdb,
+                    tvdb_id: movie.id.tvdb,
+                    title: movie.title,
+                    year: movie.year,
+                    poster: poster,
+                    is_watched: movie.is_watched || false,
+                    watched_at: movie.watched_at || null,
+                    is_favorite: movie.is_favorite || false,
+                    rewatch_count: movie.rewatch_count || 0,
+                    created_at: movie.created_at || new Date().toISOString()
+                });
+
+                imported++;
+                statusDiv.textContent = `Importing... ${imported}/${total} (${failed} failed)`;
+
+                // Small delay to avoid rate limiting
+                if (imported % 30 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            } catch (e) {
+                failed++;
+                console.error('Failed to import movie:', movie.title, e);
+            }
+        }
+
+        statusDiv.className = 'success';
+        statusDiv.textContent = `✓ Successfully imported ${imported} movies! (${failed} failed)`;
+        await loadMyList();
+        updateStats();
+    } catch (error) {
+        statusDiv.className = 'error';
+        statusDiv.textContent = `✗ Error importing: ${error.message}`;
+    }
+}
+
+// Import Series
+async function importSeries() {
+    const jsonText = document.getElementById('series-json').value;
+    const statusDiv = document.getElementById('import-status');
+
+    try {
+        const series = JSON.parse(jsonText);
+        let imported = 0;
+        let failed = 0;
+        const total = series.length;
+
+        statusDiv.className = 'success';
+        statusDiv.textContent = `Importing... 0/${total}`;
+
+        for (const show of series) {
+            try {
+                const docId = `tv_${show.id.tvdb || show.id.imdb}`;
+
+                let poster = 'https://via.placeholder.com/200x300?text=No+Image';
+                let tmdbId = null;
+
+                // Try IMDB lookup first
+                if (show.id.imdb) {
+                    try {
+                        const searchUrl = `${TMDB_BASE_URL}/find/${show.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
+                        const response = await fetch(searchUrl);
+                        const data = await response.json();
+                        if (data.tv_results && data.tv_results.length > 0) {
+                            tmdbId = data.tv_results[0].id;
+                            poster = data.tv_results[0].poster_path ? `${TMDB_IMG_BASE}${data.tv_results[0].poster_path}` : poster;
+                        }
+                    } catch (e) {
+                        console.warn('TMDB lookup failed for:', show.title);
+                    }
+                }
+
+                // If no IMDB result, try searching by title
+                if (!tmdbId && show.title) {
+                    try {
+                        // Clean title - remove year in parentheses
+                        const cleanTitle = show.title.replace(/\s*\(\d{4}\)\s*$/, '');
+                        const searchUrl = `${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(cleanTitle)}`;
+                        const response = await fetch(searchUrl);
+                        const data = await response.json();
+                        if (data.results && data.results.length > 0) {
+                            tmdbId = data.results[0].id;
+                            poster = data.results[0].poster_path ? `${TMDB_IMG_BASE}${data.results[0].poster_path}` : poster;
+                        }
+                    } catch (e) {
+                        console.warn('TMDB search failed for:', show.title);
+                    }
+                }
+
+                // Process seasons and episodes from your JSON
+                let seasons = [];
+                if (show.seasons && show.seasons.length > 0) {
+                    seasons = show.seasons.map(season => ({
+                        number: season.number,
+                        is_specials: season.is_specials || false,
+                        episodes: (season.episodes || []).map(ep => ({
+                            number: ep.number,
+                            name: ep.name || `Episode ${ep.number}`,
+                            is_watched: ep.is_watched || false,
+                            watched_at: ep.watched_at || null,
+                            rewatch_count: ep.rewatch_count || 0,
+                            watched_count: ep.watched_count || 0
+                        }))
+                    }));
+                }
+
+                await setDoc(doc(db, 'series', docId), {
+                    tmdb_id: tmdbId,
+                    imdb_id: show.id.imdb,
+                    tvdb_id: show.id.tvdb,
+                    title: show.title,
+                    year: show.year || null,
+                    poster: poster,
+                    status: show.status || 'unknown',
+                    is_favorite: show.is_favorite || false,
+                    seasons: seasons,
+                    created_at: show.created_at || new Date().toISOString()
+                });
+
+                imported++;
+                statusDiv.textContent = `Importing... ${imported}/${total} (${failed} failed)`;
+
+                // Small delay to avoid rate limiting
+                if (imported % 20 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                }
+            } catch (e) {
+                failed++;
+                console.error('Failed to import show:', show.title, e);
+            }
+        }
+
+        statusDiv.className = 'success';
+        statusDiv.textContent = `✓ Successfully imported ${imported} TV shows! (${failed} failed)`;
+        await loadMyList();
+        updateStats();
+    } catch (error) {
+        statusDiv.className = 'error';
+        statusDiv.textContent = `✗ Error importing: ${error.message}`;
+    }
+}
+
+// Update Stats
+function updateStats() {
+    const movies = myList.filter(item => item.type === 'movie');
+    const shows = myList.filter(item => item.type === 'tv');
+    const favorites = myList.filter(item => item.is_favorite);
+
+    let totalEpisodes = 0;
+    shows.forEach(show => {
+        if (show.seasons) {
+            show.seasons.forEach(season => {
+                if (season.episodes) {
+                    totalEpisodes += season.episodes.filter(ep => ep.is_watched).length;
+                }
+            });
+        }
+    });
+
+    document.getElementById('total-movies').textContent = movies.length;
+    document.getElementById('total-shows').textContent = shows.length;
+    document.getElementById('total-episodes').textContent = totalEpisodes;
+    document.getElementById('total-favorites').textContent = favorites.length;
+}
+
+// Make functions globally accessible
+window.openDetails = openDetails;
+window.removeFromList = removeFromList;
+window.removeFromListByTMDB = removeFromListByTMDB;
+window.addToList = addToList;
+window.toggleEpisode = toggleEpisode;
+window.toggleFavorite = toggleFavorite;
+window.toggleWatched = toggleWatched;
+window.markSeasonWatched = markSeasonWatched;
