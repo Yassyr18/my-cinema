@@ -135,6 +135,19 @@ function createMediaCard(item) {
 // Filter My List
 function filterMyList(filter) {
     const container = document.getElementById('my-list-content');
+    const continueSection = document.getElementById('continue-watching-section');
+    
+    if (filter === 'continue') {
+        // Show continue watching section
+        continueSection.style.display = 'block';
+        container.style.display = 'none';
+        displayContinueWatching();
+        return;
+    } else {
+        continueSection.style.display = 'none';
+        container.style.display = 'grid';
+    }
+    
     let filtered = myList;
 
     if (filter === 'tv') filtered = myList.filter(item => item.type === 'tv');
@@ -148,7 +161,6 @@ function filterMyList(filter) {
 
     container.innerHTML = filtered.map(item => createMediaCard(item)).join('');
 }
-
 // Perform Search
 async function performSearch() {
     const query = document.getElementById('search-input').value.trim();
@@ -668,6 +680,145 @@ function updateStats() {
     document.getElementById('total-episodes').textContent = totalEpisodes;
     document.getElementById('total-favorites').textContent = favorites.length;
 }
+// Display Continue Watching
+function displayContinueWatching() {
+    const container = document.getElementById('continue-watching-list');
+    
+    // Get all TV shows that are in progress
+    const inProgressShows = myList.filter(item => {
+        if (item.type !== 'tv' || !item.seasons || item.seasons.length === 0) return false;
+        
+        // Check if there's at least one watched episode and at least one unwatched episode
+        let hasWatched = false;
+        let hasUnwatched = false;
+        
+        item.seasons.forEach(season => {
+            if (season.episodes) {
+                season.episodes.forEach(ep => {
+                    if (ep.is_watched) hasWatched = true;
+                    else hasUnwatched = true;
+                });
+            }
+        });
+        
+        return hasWatched && hasUnwatched;
+    });
+    
+    if (inProgressShows.length === 0) {
+        container.innerHTML = '<p class="empty-state">No shows in progress. Start watching something!</p>';
+        return;
+    }
+    
+    // Sort by most recently watched
+    inProgressShows.sort((a, b) => {
+        const aLastWatched = getLastWatchedDate(a);
+        const bLastWatched = getLastWatchedDate(b);
+        return new Date(bLastWatched) - new Date(aLastWatched);
+    });
+    
+    container.innerHTML = inProgressShows.map(show => {
+        const nextEp = getNextEpisode(show);
+        const progress = getShowProgress(show);
+        const poster = show.poster && show.poster !== 'https://via.placeholder.com/200x300?text=No+Image'
+            ? show.poster
+            : 'https://via.placeholder.com/80x120?text=' + encodeURIComponent(show.title || 'No Image');
+        
+        return `
+            <div class="continue-card">
+                <img src="${poster}" alt="${show.title}" onerror="this.src='https://via.placeholder.com/80x120?text=No+Image'">
+                <div class="continue-info">
+                    <h3>${show.title}</h3>
+                    ${nextEp ? `
+                        <div class="next-episode">
+                            <strong>Next:</strong> S${nextEp.season}E${nextEp.number} - ${nextEp.name}
+                        </div>
+                    ` : '<div class="next-episode">All caught up!</div>'}
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${progress}%"></div>
+                    </div>
+                    <div style="font-size: 12px; color: #999; margin-bottom: 8px;">
+                        ${progress.toFixed(0)}% complete
+                    </div>
+                    <div class="continue-actions">
+                        ${nextEp ? `
+                            <button class="quick-watch-btn" onclick="quickMarkWatched('${show.docId}', ${nextEp.season}, ${nextEp.number})">
+                                ✓ Mark Watched
+                            </button>
+                        ` : ''}
+                        <button class="view-details-btn" onclick="openDetails('${show.docId}', 'tv')">
+                            View All Episodes
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Get next episode to watch
+function getNextEpisode(show) {
+    if (!show.seasons) return null;
+    
+    for (const season of show.seasons) {
+        if (!season.episodes) continue;
+        for (const episode of season.episodes) {
+            if (!episode.is_watched) {
+                return {
+                    season: season.number,
+                    number: episode.number,
+                    name: episode.name || `Episode ${episode.number}`
+                };
+            }
+        }
+    }
+    return null;
+}
+
+// Get show progress percentage
+function getShowProgress(show) {
+    if (!show.seasons) return 0;
+    
+    let total = 0;
+    let watched = 0;
+    
+    show.seasons.forEach(season => {
+        if (season.episodes) {
+            season.episodes.forEach(ep => {
+                total++;
+                if (ep.is_watched) watched++;
+            });
+        }
+    });
+    
+    return total > 0 ? (watched / total) * 100 : 0;
+}
+
+// Get last watched date
+function getLastWatchedDate(show) {
+    let lastDate = null;
+    
+    if (show.seasons) {
+        show.seasons.forEach(season => {
+            if (season.episodes) {
+                season.episodes.forEach(ep => {
+                    if (ep.is_watched && ep.watched_at) {
+                        if (!lastDate || new Date(ep.watched_at) > new Date(lastDate)) {
+                            lastDate = ep.watched_at;
+                        }
+                    }
+                });
+            }
+        });
+    }
+    
+    return lastDate || show.created_at || new Date().toISOString();
+}
+
+// Quick mark episode as watched
+async function quickMarkWatched(docId, seasonNum, episodeNum) {
+    await toggleEpisode(docId, seasonNum, episodeNum);
+    displayContinueWatching(); // Refresh the continue watching list
+}
 
 // Make functions globally accessible
 window.openDetails = openDetails;
@@ -678,3 +829,4 @@ window.toggleEpisode = toggleEpisode;
 window.toggleFavorite = toggleFavorite;
 window.toggleWatched = toggleWatched;
 window.markSeasonWatched = markSeasonWatched;
+window.quickMarkWatched = quickMarkWatched;
