@@ -9,12 +9,48 @@ body {
     background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
     min-height: 100vh;
     color: #333;
+    overscroll-behavior-y: contain;
 }
 
 .container {
     max-width: 1400px;
     margin: 0 auto;
     padding: 20px;
+}
+
+/* Pull to Refresh */
+.pull-refresh-indicator {
+    position: fixed;
+    top: -60px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: white;
+    padding: 15px 30px;
+    border-radius: 30px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 2000;
+    transition: top 0.3s;
+}
+
+.pull-refresh-indicator.visible {
+    top: 20px;
+}
+
+.spinner {
+    width: 20px;
+    height: 20px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #1e3c72;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 header {
@@ -179,6 +215,21 @@ nav {
     font-size: 18px;
 }
 
+/* Status progress line at bottom of poster */
+.status-line {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 4px;
+    transition: width 0.3s;
+}
+
+.status-watching { background: linear-gradient(90deg, #FFC107, #FFB300); }
+.status-uptodate { background: #4CAF50; }
+.status-finished { background: #2196F3; }
+.status-dropped { background: #f44336; }
+.status-paused { background: #FF9800; }
+
 .media-card .add-btn {
     width: 100%;
     padding: 10px;
@@ -200,6 +251,135 @@ nav {
 
 .media-card .remove-btn:hover {
     background: #da190b;
+}
+
+/* Continue Watching - Horizontal Cards (TV Time style) */
+#continue-watching-section {
+    margin-bottom: 30px;
+}
+
+.continue-card {
+    background: white;
+    border: 2px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    min-height: 100px;
+    transition: all 0.3s;
+    position: relative;
+}
+
+.continue-card:hover {
+    border-color: #1e3c72;
+    box-shadow: 0 4px 12px rgba(30, 60, 114, 0.15);
+}
+
+.continue-card.history-item {
+    opacity: 0.5;
+    filter: grayscale(30%);
+}
+
+.continue-card img {
+    width: 60px;
+    height: 90px;
+    object-fit: cover;
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+
+.continue-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.continue-info h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #1e3c72;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.continue-info h3:hover {
+    text-decoration: underline;
+}
+
+.continue-info .episode-code {
+    font-size: 13px;
+    color: #666;
+    font-weight: 600;
+}
+
+.continue-info .episode-name {
+    font-size: 12px;
+    color: #999;
+}
+
+.continue-info .progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #e0e0e0;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 2px;
+}
+
+.continue-info .progress-fill {
+    height: 100%;
+    transition: width 0.3s;
+}
+
+.continue-info .progress-fill.watching { background: linear-gradient(90deg, #FFC107, #FFB300); }
+.continue-info .progress-fill.uptodate { background: #4CAF50; }
+
+.quick-check-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 3px solid #1e3c72;
+    background: white;
+    color: #1e3c72;
+    font-size: 20px;
+    cursor: pointer;
+    transition: all 0.3s;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.quick-check-btn:hover {
+    background: #1e3c72;
+    color: white;
+    transform: scale(1.1);
+}
+
+.quick-check-btn.checked {
+    background: #4CAF50;
+    border-color: #4CAF50;
+    color: white;
+}
+
+/* Watch History Header */
+.history-header {
+    margin: 30px 0 15px 0;
+}
+
+.history-divider {
+    text-align: center;
+    font-size: 12px;
+    color: #999;
+    font-weight: 600;
+    letter-spacing: 1px;
+    padding: 10px 0;
+    border-top: 1px solid #ddd;
+    border-bottom: 1px solid #ddd;
 }
 
 .import-section {
@@ -321,6 +501,82 @@ nav {
     color: #000;
 }
 
+/* Show Options Menu (3-dot) */
+.show-options {
+    position: relative;
+    display: inline-block;
+}
+
+.options-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 5px 10px;
+    color: #666;
+}
+
+.options-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 100%;
+    background: white;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 100;
+    min-width: 150px;
+}
+
+.options-menu.show {
+    display: block;
+}
+
+.options-menu button {
+    display: block;
+    width: 100%;
+    padding: 10px 15px;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.options-menu button:hover {
+    background: #f5f5f5;
+}
+
+.options-menu button.danger {
+    color: #f44336;
+}
+
+/* Progress bar in detail view */
+.detail-progress {
+    margin: 15px 0;
+}
+
+.detail-progress-label {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 8px;
+}
+
+.detail-progress-bar {
+    width: 100%;
+    height: 10px;
+    background: #e0e0e0;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.detail-progress-fill {
+    height: 100%;
+    transition: width 0.3s;
+}
+
 .season {
     margin-bottom: 20px;
 }
@@ -331,6 +587,13 @@ nav {
     padding: 10px;
     border-radius: 8px;
     margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.season.specials h3 {
+    background: #666;
 }
 
 .episode {
@@ -356,7 +619,6 @@ nav {
 
 .watch-btn {
     padding: 8px 16px;
-    border: none;
     border-radius: 6px;
     cursor: pointer;
     font-weight: 600;
@@ -364,11 +626,55 @@ nav {
 }
 
 .watch-btn.mark-watched {
+    background: white;
+    border: 2px solid #1e3c72;
+    color: #1e3c72;
+}
+
+.watch-btn.mark-watched:hover {
+    background: #1e3c72;
+    color: white;
+}
+
+.watch-btn.watched {
+    background: #4CAF50;
+    border: 2px solid #4CAF50;
+    color: white;
+}
+
+.mark-all-btn {
+    background: white;
+    border: 2px solid #1e3c72;
+    color: #1e3c72;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.3s;
+}
+
+.mark-all-btn:hover {
+    background: #1e3c72;
+    color: white;
+}
+
+/* Confirmation Dialog */
+.confirm-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.confirm-yes {
     background: #4CAF50;
     color: white;
 }
 
-.watch-btn.mark-unwatched {
+.confirm-no {
     background: #f44336;
     color: white;
 }
@@ -380,131 +686,6 @@ nav {
     font-size: 18px;
 }
 
-@media (max-width: 768px) {
-    .media-grid {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-        gap: 15px;
-    }
-    
-    .media-card img {
-        height: 225px;
-    }
-    
-    nav {
-        flex-direction: column;
-    }
-    
-    .tab-btn {
-        width: 100%;
-    }
-}
-/* Continue Watching Styles */
-.continue-card {
-    background: white;
-    border: 2px solid #e0e0e0;
-    border-radius: 12px;
-    padding: 15px;
-    margin-bottom: 15px;
-    display: flex;
-    gap: 15px;
-    align-items: center;
-    transition: all 0.3s;
-}
-
-.continue-card:hover {
-    border-color: #1e3c72;
-    box-shadow: 0 4px 12px rgba(30, 60, 114, 0.15);
-}
-
-.continue-card img {
-    width: 80px;
-    height: 120px;
-    object-fit: cover;
-    border-radius: 8px;
-    flex-shrink: 0;
-}
-
-.continue-info {
-    flex: 1;
-    min-width: 0;
-}
-
-.continue-info h3 {
-    margin: 0 0 8px 0;
-    color: #1e3c72;
-    font-size: 18px;
-}
-
-.continue-info .next-episode {
-    color: #666;
-    font-size: 14px;
-    margin-bottom: 8px;
-}
-
-.continue-info .progress-bar {
-    width: 100%;
-    height: 8px;
-    background: #e0e0e0;
-    border-radius: 4px;
-    overflow: hidden;
-    margin-bottom: 8px;
-}
-
-.continue-info .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #4CAF50, #45a049);
-    transition: width 0.3s;
-}
-
-.continue-actions {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
-.quick-watch-btn {
-    padding: 8px 16px;
-    background: #4CAF50;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    transition: all 0.3s;
-}
-
-.quick-watch-btn:hover {
-    background: #45a049;
-}
-
-.view-details-btn {
-    padding: 8px 16px;
-    background: #1e3c72;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    transition: all 0.3s;
-}
-
-.view-details-btn:hover {
-    background: #2a5298;
-}
-
-@media (max-width: 768px) {
-    .continue-card {
-        flex-direction: column;
-        text-align: center;
-    }
-    
-    .continue-card img {
-        width: 120px;
-        height: 180px;
-    }
-}
 /* Calendar Styles */
 .calendar-section {
     margin-bottom: 40px;
@@ -533,6 +714,7 @@ nav {
     gap: 15px;
     align-items: center;
     transition: all 0.3s;
+    cursor: pointer;
 }
 
 .calendar-item:hover {
@@ -573,9 +755,6 @@ nav {
 .calendar-item-info .air-date {
     color: #999;
     font-size: 12px;
-    display: flex;
-    align-items: center;
-    gap: 5px;
 }
 
 .calendar-item-info .air-date.today {
@@ -594,13 +773,24 @@ nav {
 }
 
 @media (max-width: 768px) {
-    .calendar-item {
-        flex-direction: column;
-        text-align: center;
+    .media-grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 15px;
     }
     
-    .calendar-item img {
-        width: 100px;
-        height: 150px;
+    .media-card img {
+        height: 225px;
+    }
+    
+    nav {
+        flex-direction: column;
+    }
+    
+    .tab-btn {
+        width: 100%;
+    }
+    
+    .continue-card {
+        min-height: auto;
     }
 }
