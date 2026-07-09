@@ -64,6 +64,18 @@ function setupEventListeners() {
 
     document.getElementById('import-movies-btn').addEventListener('click', importMovies);
     document.getElementById('import-series-btn').addEventListener('click', importSeries);
+        
+    // Calendar refresh
+    document.getElementById('refresh-calendar-btn').addEventListener('click', loadCalendar);
+    
+    // Tab change - load calendar when calendar tab is clicked
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        if (btn.dataset.tab === 'calendar') {
+            btn.addEventListener('click', () => {
+                loadCalendar();
+            });
+        }
+    });
 
     document.querySelector('.close').addEventListener('click', () => {
         document.getElementById('modal').style.display = 'none';
@@ -818,6 +830,131 @@ function getLastWatchedDate(show) {
 async function quickMarkWatched(docId, seasonNum, episodeNum) {
     await toggleEpisode(docId, seasonNum, episodeNum);
     displayContinueWatching(); // Refresh the continue watching list
+}
+// Load Calendar
+async function loadCalendar() {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    
+    const weekFromNow = new Date(today);
+    weekFromNow.setDate(weekFromNow.getDate() + 7);
+    const weekStr = weekFromNow.toISOString().split('T')[0];
+    
+    const monthFromNow = new Date(today);
+    monthFromNow.setDate(monthFromNow.getDate() + 30);
+    const monthStr = monthFromNow.toISOString().split('T')[0];
+    
+    const todayContainer = document.getElementById('calendar-today');
+    const weekContainer = document.getElementById('calendar-week');
+    const upcomingContainer = document.getElementById('calendar-upcoming');
+    
+    todayContainer.innerHTML = '<p class="empty-state">Loading...</p>';
+    weekContainer.innerHTML = '<p class="empty-state">Loading...</p>';
+    upcomingContainer.innerHTML = '<p class="empty-state">Loading...</p>';
+    
+    const todayEpisodes = [];
+    const weekEpisodes = [];
+    const upcomingEpisodes = [];
+    
+    // Get all TV shows with TMDB IDs
+    const tvShows = myList.filter(item => item.type === 'tv' && item.tmdb_id);
+    
+    for (const show of tvShows) {
+        try {
+            // Get show details from TMDB
+            const detailsUrl = `${TMDB_BASE_URL}/tv/${show.tmdb_id}?api_key=${TMDB_API_KEY}`;
+            const response = await fetch(detailsUrl);
+            const details = await response.json();
+            
+            if (details.next_episode_to_air) {
+                const airDate = details.next_episode_to_air.air_date;
+                const episode = {
+                    show: show.title,
+                    poster: show.poster,
+                    docId: show.docId,
+                    season: details.next_episode_to_air.season_number,
+                    episode: details.next_episode_to_air.episode_number,
+                    name: details.next_episode_to_air.name,
+                    airDate: airDate,
+                    airDateObj: new Date(airDate)
+                };
+                
+                if (airDate === todayStr) {
+                    todayEpisodes.push(episode);
+                } else if (airDate > todayStr && airDate <= weekStr) {
+                    weekEpisodes.push(episode);
+                } else if (airDate > weekStr && airDate <= monthStr) {
+                    upcomingEpisodes.push(episode);
+                }
+            }
+            
+            // Small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 250));
+        } catch (error) {
+            console.error('Error fetching calendar for:', show.title, error);
+        }
+    }
+    
+    // Display results
+    displayCalendarSection(todayContainer, todayEpisodes, true);
+    displayCalendarSection(weekContainer, weekEpisodes, false);
+    displayCalendarSection(upcomingContainer, upcomingEpisodes, false);
+}
+
+// Display Calendar Section
+function displayCalendarSection(container, episodes, isToday) {
+    if (episodes.length === 0) {
+        container.innerHTML = '<p class="empty-state">No episodes scheduled.</p>';
+        return;
+    }
+    
+    // Sort by air date
+    episodes.sort((a, b) => a.airDateObj - b.airDateObj);
+    
+    container.innerHTML = episodes.map(ep => {
+        const poster = ep.poster && ep.poster !== 'https://via.placeholder.com/200x300?text=No+Image'
+            ? ep.poster
+            : 'https://via.placeholder.com/60x90?text=No+Image';
+        
+        const dateStr = formatAirDate(ep.airDateObj);
+        
+        return `
+            <div class="calendar-item ${isToday ? 'airing-today' : ''}" onclick="openDetails('${ep.docId}', 'tv')">
+                <img src="${poster}" alt="${ep.show}" onerror="this.src='https://via.placeholder.com/60x90?text=No+Image'">
+                <div class="calendar-item-info">
+                    <h4>${ep.show}</h4>
+                    <div class="episode-title">
+                        S${ep.season}E${ep.episode} - ${ep.name}
+                    </div>
+                    <div class="air-date ${isToday ? 'today' : ''}">
+                        📅 ${dateStr}
+                        ${isToday ? '<span class="calendar-badge">Airing Today</span>' : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Format air date
+function formatAirDate(date) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+    
+    if (checkDate.getTime() === today.getTime()) {
+        return 'Today';
+    } else if (checkDate.getTime() === tomorrow.getTime()) {
+        return 'Tomorrow';
+    } else {
+        const options = { weekday: 'short', month: 'short', day: 'numeric' };
+        return date.toLocaleDateString('en-US', options);
+    }
 }
 
 // Make functions globally accessible
