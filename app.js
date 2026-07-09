@@ -32,7 +32,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Event Listeners
 function setupEventListeners() {
-    // Tab switching
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -42,7 +41,6 @@ function setupEventListeners() {
         });
     });
 
-    // Filter buttons
     document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -51,13 +49,11 @@ function setupEventListeners() {
         });
     });
 
-    // Search
     document.getElementById('search-btn').addEventListener('click', performSearch);
     document.getElementById('search-input').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') performSearch();
     });
 
-    // Search filters
     document.querySelectorAll('.search-filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.search-filter-btn').forEach(b => b.classList.remove('active'));
@@ -66,13 +62,17 @@ function setupEventListeners() {
         });
     });
 
-    // Import buttons
     document.getElementById('import-movies-btn').addEventListener('click', importMovies);
     document.getElementById('import-series-btn').addEventListener('click', importSeries);
 
-    // Modal close
     document.querySelector('.close').addEventListener('click', () => {
         document.getElementById('modal').style.display = 'none';
+    });
+
+    window.addEventListener('click', (e) => {
+        if (e.target === document.getElementById('modal')) {
+            document.getElementById('modal').style.display = 'none';
+        }
     });
 }
 
@@ -81,14 +81,17 @@ async function loadMyList() {
     try {
         myList = [];
         const moviesSnapshot = await getDocs(collection(db, 'movies'));
-        moviesSnapshot.forEach(doc => {
-            myList.push({ ...doc.data(), docId: doc.id, type: 'movie' });
+        moviesSnapshot.forEach(docSnap => {
+            myList.push({ ...docSnap.data(), docId: docSnap.id, type: 'movie' });
         });
 
         const seriesSnapshot = await getDocs(collection(db, 'series'));
-        seriesSnapshot.forEach(doc => {
-            myList.push({ ...doc.data(), docId: doc.id, type: 'tv' });
+        seriesSnapshot.forEach(docSnap => {
+            myList.push({ ...docSnap.data(), docId: docSnap.id, type: 'tv' });
         });
+
+        // Sort by title
+        myList.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
 
         displayMyList();
     } catch (error) {
@@ -99,24 +102,34 @@ async function loadMyList() {
 // Display My List
 function displayMyList() {
     const container = document.getElementById('my-list-content');
-    
+
     if (myList.length === 0) {
         container.innerHTML = '<p class="empty-state">Your list is empty. Search for shows/movies to add!</p>';
         return;
     }
 
-    container.innerHTML = myList.map(item => `
+    container.innerHTML = myList.map(item => createMediaCard(item)).join('');
+}
+
+// Create Media Card HTML
+function createMediaCard(item) {
+    const poster = item.poster && item.poster !== 'https://via.placeholder.com/200x300?text=No+Image'
+        ? item.poster
+        : 'https://via.placeholder.com/200x300?text=' + encodeURIComponent(item.title || 'No Image');
+
+    return `
         <div class="media-card" onclick="openDetails('${item.docId}', '${item.type}')">
             ${item.is_favorite ? '<div class="favorite-badge">⭐</div>' : ''}
-            <img src="${item.poster || 'https://via.placeholder.com/200x300?text=No+Image'}" alt="${item.title}">
+            <img src="${poster}" alt="${item.title}" onerror="this.src='https://via.placeholder.com/200x300?text=No+Image'">
             <div class="info">
-                <h3>${item.title}</h3>
+                <h3>${item.title || 'Unknown Title'}</h3>
                 <p class="year">${item.year || 'N/A'}</p>
                 ${item.type === 'tv' ? `<p class="year">Status: ${item.status || 'Watching'}</p>` : ''}
+                ${item.type === 'movie' && item.is_watched ? '<p class="year">✓ Watched</p>' : ''}
             </div>
             <button class="add-btn remove-btn" onclick="event.stopPropagation(); removeFromList('${item.docId}', '${item.type}')">Remove</button>
         </div>
-    `).join('');
+    `;
 }
 
 // Filter My List
@@ -133,18 +146,7 @@ function filterMyList(filter) {
         return;
     }
 
-    container.innerHTML = filtered.map(item => `
-        <div class="media-card" onclick="openDetails('${item.docId}', '${item.type}')">
-            ${item.is_favorite ? '<div class="favorite-badge">⭐</div>' : ''}
-            <img src="${item.poster || 'https://via.placeholder.com/200x300?text=No+Image'}" alt="${item.title}">
-            <div class="info">
-                <h3>${item.title}</h3>
-                <p class="year">${item.year || 'N/A'}</p>
-                ${item.type === 'tv' ? `<p class="year">Status: ${item.status || 'Watching'}</p>` : ''}
-            </div>
-            <button class="add-btn remove-btn" onclick="event.stopPropagation(); removeFromList('${item.docId}', '${item.type}')">Remove</button>
-        </div>
-    `).join('');
+    container.innerHTML = filtered.map(item => createMediaCard(item)).join('');
 }
 
 // Perform Search
@@ -153,7 +155,7 @@ async function performSearch() {
     if (!query) return;
 
     const url = `${TMDB_BASE_URL}/search/${currentSearchType}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`;
-    
+
     try {
         const response = await fetch(url);
         const data = await response.json();
@@ -166,7 +168,7 @@ async function performSearch() {
 // Display Search Results
 function displaySearchResults(results) {
     const container = document.getElementById('search-results');
-    
+
     if (!results || results.length === 0) {
         container.innerHTML = '<p class="empty-state">No results found.</p>';
         return;
@@ -177,19 +179,21 @@ function displaySearchResults(results) {
         const year = (item.release_date || item.first_air_date || '').substring(0, 4);
         const type = item.media_type || currentSearchType;
         const poster = item.poster_path ? `${TMDB_IMG_BASE}${item.poster_path}` : 'https://via.placeholder.com/200x300?text=No+Image';
-        
+
         const isInList = myList.some(listItem => listItem.tmdb_id === item.id);
+        const safeTitle = (title || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
         return `
             <div class="media-card">
-                <img src="${poster}" alt="${title}">
+                <img src="${poster}" alt="${title}" onerror="this.src='https://via.placeholder.com/200x300?text=No+Image'">
                 <div class="info">
                     <h3>${title}</h3>
                     <p class="year">${year}</p>
+                    <p class="year">${type === 'tv' ? 'TV Show' : type === 'movie' ? 'Movie' : ''}</p>
                 </div>
-                <button class="add-btn ${isInList ? 'remove-btn' : ''}" 
-                        onclick="${isInList ? `removeFromListByTMDB(${item.id}, '${type}')` : `addToList(${item.id}, '${type}', '${title.replace(/'/g, "\\'")}', '${year}', '${poster}')`}">
-                    ${isInList ? 'Remove' : 'Add to List'}
+                <button class="add-btn ${isInList ? 'remove-btn' : ''}"
+                        onclick="${isInList ? `removeFromListByTMDB(${item.id}, '${type}')` : `addToList(${item.id}, '${type}', '${safeTitle}', '${year}', '${poster}')`}">
+                    ${isInList ? 'In Your List ✓' : 'Add to List'}
                 </button>
             </div>
         `;
@@ -212,22 +216,21 @@ async function addToList(tmdbId, type, title, year, poster) {
         };
 
         if (type === 'tv') {
-            // Fetch episode data from TMDB
             const detailsUrl = `${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`;
             const response = await fetch(detailsUrl);
             const details = await response.json();
-            
+
             data.status = 'watching';
             data.seasons = [];
-            
+
             for (let i = 1; i <= details.number_of_seasons; i++) {
                 const seasonUrl = `${TMDB_BASE_URL}/tv/${tmdbId}/season/${i}?api_key=${TMDB_API_KEY}`;
                 const seasonResponse = await fetch(seasonUrl);
                 const seasonData = await seasonResponse.json();
-                
+
                 data.seasons.push({
                     number: i,
-                    episodes: seasonData.episodes.map(ep => ({
+                    episodes: (seasonData.episodes || []).map(ep => ({
                         number: ep.episode_number,
                         name: ep.name,
                         is_watched: false,
@@ -253,18 +256,19 @@ async function addToList(tmdbId, type, title, year, poster) {
 // Remove from List
 async function removeFromList(docId, type) {
     if (!confirm('Remove this item from your list?')) return;
-    
+
     try {
         const collectionName = type === 'movie' ? 'movies' : 'series';
         await deleteDoc(doc(db, collectionName, docId));
         await loadMyList();
         updateStats();
+        document.getElementById('modal').style.display = 'none';
     } catch (error) {
         console.error('Error removing:', error);
     }
 }
 
-// Remove from List by TMDB ID (for search results)
+// Remove from List by TMDB ID
 async function removeFromListByTMDB(tmdbId, type) {
     const docId = `${type}_${tmdbId}`;
     await removeFromList(docId, type);
@@ -277,57 +281,115 @@ function openDetails(docId, type) {
 
     const modal = document.getElementById('modal');
     const modalBody = document.getElementById('modal-body');
+    const safeDocId = docId.replace(/'/g, "\\'");
 
     if (type === 'movie') {
         modalBody.innerHTML = `
-            <h2>${item.title} (${item.year})</h2>
-            <img src="${item.poster}" style="max-width: 200px; margin: 20px 0;">
-            <div>
-                <button onclick="toggleFavorite('${docId}', '${type}')" class="watch-btn ${item.is_favorite ? 'mark-unwatched' : 'mark-watched'}">
-                    ${item.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}
-                </button>
-                <button onclick="toggleWatched('${docId}', 'movie')" class="watch-btn ${item.is_watched ? 'mark-unwatched' : 'mark-watched'}">
-                    ${item.is_watched ? 'Mark as Unwatched' : 'Mark as Watched'}
-                </button>
+            <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                <img src="${item.poster}" style="max-width: 200px; border-radius: 8px;" onerror="this.src='https://via.placeholder.com/200x300?text=No+Image'">
+                <div>
+                    <h2>${item.title} (${item.year})</h2>
+                    <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button onclick="toggleFavorite('${safeDocId}', '${type}')" class="watch-btn ${item.is_favorite ? 'mark-unwatched' : 'mark-watched'}">
+                            ${item.is_favorite ? '⭐ Remove Favorite' : '☆ Add to Favorites'}
+                        </button>
+                        <button onclick="toggleWatched('${safeDocId}', 'movie')" class="watch-btn ${item.is_watched ? 'mark-unwatched' : 'mark-watched'}">
+                            ${item.is_watched ? '✓ Watched' : '○ Mark as Watched'}
+                        </button>
+                    </div>
+                    ${item.watched_at ? `<p style="margin-top: 15px; color: #666;">Watched on: ${new Date(item.watched_at).toLocaleDateString()}</p>` : ''}
+                    ${item.rewatch_count > 0 ? `<p style="color: #666;">Rewatched: ${item.rewatch_count} time(s)</p>` : ''}
+                </div>
             </div>
-            ${item.watched_at ? `<p style="margin-top: 20px;">Watched on: ${new Date(item.watched_at).toLocaleDateString()}</p>` : ''}
         `;
     } else {
         let episodesHTML = '';
-        if (item.seasons) {
+        let watchedCount = 0;
+        let totalCount = 0;
+
+        if (item.seasons && item.seasons.length > 0) {
+            item.seasons.forEach(season => {
+                if (season.episodes) {
+                    season.episodes.forEach(ep => {
+                        totalCount++;
+                        if (ep.is_watched) watchedCount++;
+                    });
+                }
+            });
+
             episodesHTML = item.seasons.map(season => `
                 <div class="season">
-                    <h3>Season ${season.number}</h3>
-                    ${season.episodes.map(ep => `
+                    <h3>Season ${season.number} 
+                        <span style="font-size: 14px; font-weight: normal;">
+                            (${season.episodes ? season.episodes.filter(e => e.is_watched).length : 0}/${season.episodes ? season.episodes.length : 0} watched)
+                        </span>
+                        <button onclick="markSeasonWatched('${safeDocId}', ${season.number})" 
+                                style="float: right; padding: 5px 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            Mark All Watched
+                        </button>
+                    </h3>
+                    ${season.episodes ? season.episodes.map(ep => `
                         <div class="episode ${ep.is_watched ? 'watched' : ''}">
                             <div class="episode-info">
-                                <span class="episode-number">E${ep.number}</span> - ${ep.name}
+                                <span class="episode-number">E${ep.number}</span> - ${ep.name || 'Episode ' + ep.number}
+                                ${ep.watched_at ? `<br><small style="color: #999;">${new Date(ep.watched_at).toLocaleDateString()}</small>` : ''}
                             </div>
                             <button class="watch-btn ${ep.is_watched ? 'mark-unwatched' : 'mark-watched'}"
-                                    onclick="toggleEpisode('${docId}', ${season.number}, ${ep.number})">
+                                    onclick="toggleEpisode('${safeDocId}', ${season.number}, ${ep.number})">
                                 ${ep.is_watched ? '✓ Watched' : 'Mark Watched'}
                             </button>
                         </div>
-                    `).join('')}
+                    `).join('') : '<p>No episode data available</p>'}
                 </div>
             `).join('');
+        } else {
+            episodesHTML = '<p style="color: #999; padding: 20px;">No episode data available for this show.</p>';
         }
 
         modalBody.innerHTML = `
-            <h2>${item.title} (${item.year})</h2>
-            <img src="${item.poster}" style="max-width: 200px; margin: 20px 0;">
-            <div>
-                <button onclick="toggleFavorite('${docId}', '${type}')" class="watch-btn ${item.is_favorite ? 'mark-unwatched' : 'mark-watched'}">
-                    ${item.is_favorite ? 'Remove from Favorites' : 'Add to Favorites'}
-                </button>
+            <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;">
+                <img src="${item.poster}" style="max-width: 200px; border-radius: 8px;" onerror="this.src='https://via.placeholder.com/200x300?text=No+Image'">
+                <div>
+                    <h2>${item.title}</h2>
+                    <p style="color: #666;">Status: ${item.status || 'Unknown'}</p>
+                    <p style="color: #666;">Progress: ${watchedCount}/${totalCount} episodes</p>
+                    <div style="margin-top: 15px;">
+                        <button onclick="toggleFavorite('${safeDocId}', '${type}')" class="watch-btn ${item.is_favorite ? 'mark-unwatched' : 'mark-watched'}">
+                            ${item.is_favorite ? '⭐ Remove Favorite' : '☆ Add to Favorites'}
+                        </button>
+                    </div>
+                </div>
             </div>
-            <div style="margin-top: 30px;">
-                ${episodesHTML}
-            </div>
+            ${episodesHTML}
         `;
     }
 
     modal.style.display = 'block';
+}
+
+// Mark Entire Season as Watched
+async function markSeasonWatched(docId, seasonNum) {
+    const item = myList.find(i => i.docId === docId);
+    if (!item) return;
+
+    const season = item.seasons.find(s => s.number === seasonNum);
+    if (!season) return;
+
+    const allWatched = season.episodes.every(e => e.is_watched);
+
+    season.episodes.forEach(ep => {
+        ep.is_watched = !allWatched;
+        ep.watched_at = !allWatched ? new Date().toISOString() : null;
+    });
+
+    try {
+        await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
+        await loadMyList();
+        updateStats();
+        openDetails(docId, 'tv');
+    } catch (error) {
+        console.error('Error updating season:', error);
+    }
 }
 
 // Toggle Episode Watched Status
@@ -337,7 +399,7 @@ async function toggleEpisode(docId, seasonNum, episodeNum) {
 
     const season = item.seasons.find(s => s.number === seasonNum);
     const episode = season.episodes.find(e => e.number === episodeNum);
-    
+
     episode.is_watched = !episode.is_watched;
     episode.watched_at = episode.is_watched ? new Date().toISOString() : null;
 
@@ -345,7 +407,7 @@ async function toggleEpisode(docId, seasonNum, episodeNum) {
         await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
         await loadMyList();
         updateStats();
-        openDetails(docId, 'tv'); // Refresh modal
+        openDetails(docId, 'tv');
     } catch (error) {
         console.error('Error updating episode:', error);
     }
@@ -363,7 +425,7 @@ async function toggleFavorite(docId, type) {
         await updateDoc(doc(db, collectionName, docId), { is_favorite: item.is_favorite });
         await loadMyList();
         updateStats();
-        openDetails(docId, type); // Refresh modal
+        openDetails(docId, type);
     } catch (error) {
         console.error('Error updating favorite:', error);
     }
@@ -378,13 +440,13 @@ async function toggleWatched(docId, type) {
     item.watched_at = item.is_watched ? new Date().toISOString() : null;
 
     try {
-        await updateDoc(doc(db, 'movies', docId), { 
+        await updateDoc(doc(db, 'movies', docId), {
             is_watched: item.is_watched,
             watched_at: item.watched_at
         });
         await loadMyList();
         updateStats();
-        openDetails(docId, type); // Refresh modal
+        openDetails(docId, type);
     } catch (error) {
         console.error('Error updating watched status:', error);
     }
@@ -394,133 +456,25 @@ async function toggleWatched(docId, type) {
 async function importMovies() {
     const jsonText = document.getElementById('movies-json').value;
     const statusDiv = document.getElementById('import-status');
-    
+
     try {
         const movies = JSON.parse(jsonText);
         let imported = 0;
+        let failed = 0;
+        const total = movies.length;
+
+        statusDiv.className = 'success';
+        statusDiv.textContent = `Importing... 0/${total}`;
 
         for (const movie of movies) {
-            const docId = `movie_${movie.id.tvdb || movie.id.imdb}`;
-            
-            // Try to get TMDB data
-            let poster = 'https://via.placeholder.com/200x300?text=No+Image';
-            let tmdbId = null;
+            try {
+                const docId = `movie_${movie.id.tvdb || movie.id.imdb}`;
 
-            if (movie.id.imdb) {
-                const searchUrl = `${TMDB_BASE_URL}/find/${movie.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
-                const response = await fetch(searchUrl);
-                const data = await response.json();
-                if (data.movie_results && data.movie_results.length > 0) {
-                    tmdbId = data.movie_results[0].id;
-                    poster = data.movie_results[0].poster_path ? `${TMDB_IMG_BASE}${data.movie_results[0].poster_path}` : poster;
-                }
-            }
+                let poster = 'https://via.placeholder.com/200x300?text=No+Image';
+                let tmdbId = null;
 
-            await setDoc(doc(db, 'movies', docId), {
-                tmdb_id: tmdbId,
-                imdb_id: movie.id.imdb,
-                tvdb_id: movie.id.tvdb,
-                title: movie.title,
-                year: movie.year,
-                poster: poster,
-                is_watched: movie.is_watched,
-                watched_at: movie.watched_at,
-                is_favorite: movie.is_favorite,
-                rewatch_count: movie.rewatch_count,
-                created_at: movie.created_at
-            });
-            
-            imported++;
-        }
-
-        statusDiv.className = 'success';
-        statusDiv.textContent = `✓ Successfully imported ${imported} movies!`;
-        await loadMyList();
-        updateStats();
-    } catch (error) {
-        statusDiv.className = 'error';
-        statusDiv.textContent = `✗ Error importing: ${error.message}`;
-    }
-}
-
-// Import Series
-async function importSeries() {
-    const jsonText = document.getElementById('series-json').value;
-    const statusDiv = document.getElementById('import-status');
-    
-    try {
-        const series = JSON.parse(jsonText);
-        let imported = 0;
-
-        for (const show of series) {
-            const docId = `tv_${show.id.tvdb || show.id.imdb}`;
-            
-            // Try to get TMDB data
-            let poster = 'https://via.placeholder.com/200x300?text=No+Image';
-            let tmdbId = null;
-
-            if (show.id.imdb) {
-                const searchUrl = `${TMDB_BASE_URL}/find/${show.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
-                const response = await fetch(searchUrl);
-                const data = await response.json();
-                if (data.tv_results && data.tv_results.length > 0) {
-                    tmdbId = data.tv_results[0].id;
-                    poster = data.tv_results[0].poster_path ? `${TMDB_IMG_BASE}${data.tv_results[0].poster_path}` : poster;
-                }
-            }
-
-            await setDoc(doc(db, 'series', docId), {
-                tmdb_id: tmdbId,
-                imdb_id: show.id.imdb,
-                tvdb_id: show.id.tvdb,
-                title: show.title,
-                year: show.year || null,
-                poster: poster,
-                status: show.status,
-                is_favorite: show.is_favorite,
-                seasons: show.seasons || [],
-                created_at: show.created_at
-            });
-            
-            imported++;
-        }
-
-        statusDiv.className = 'success';
-        statusDiv.textContent = `✓ Successfully imported ${imported} TV shows!`;
-        await loadMyList();
-        updateStats();
-    } catch (error) {
-        statusDiv.className = 'error';
-        statusDiv.textContent = `✗ Error importing: ${error.message}`;
-    }
-}
-
-// Update Stats
-function updateStats() {
-    const movies = myList.filter(item => item.type === 'movie');
-    const shows = myList.filter(item => item.type === 'tv');
-    const favorites = myList.filter(item => item.is_favorite);
-    
-    let totalEpisodes = 0;
-    shows.forEach(show => {
-        if (show.seasons) {
-            show.seasons.forEach(season => {
-                totalEpisodes += season.episodes.filter(ep => ep.is_watched).length;
-            });
-        }
-    });
-
-    document.getElementById('total-movies').textContent = movies.length;
-    document.getElementById('total-shows').textContent = shows.length;
-    document.getElementById('total-episodes').textContent = totalEpisodes;
-    document.getElementById('total-favorites').textContent = favorites.length;
-}
-
-// Make functions globally accessible
-window.openDetails = openDetails;
-window.removeFromList = removeFromList;
-window.removeFromListByTMDB = removeFromListByTMDB;
-window.addToList = addToList;
-window.toggleEpisode = toggleEpisode;
-window.toggleFavorite = toggleFavorite;
-window.toggleWatched = toggleWatched;
+                // Try IMDB lookup first
+                if (movie.id.imdb) {
+                    try {
+                        const searchUrl = `${TMDB_BASE_URL}/find/${movie.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
+                        const 
