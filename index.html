@@ -10,6 +10,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="My Cinema">
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- Pull to refresh indicator -->
@@ -40,15 +41,11 @@
                 <button class="filter-btn" data-filter="favorites">Favorites ⭐</button>
             </div>
             
-            <!-- Continue Watching Section -->
             <div id="continue-watching-section" style="display:none;">
                 <h2 style="margin-bottom: 15px; color: #1e3c72;">▶️ Continue Watching</h2>
-                
-                <!-- Watch History (Recently Watched - Faded) -->
                 <div id="watch-history-header" class="history-header" style="display:none;">
                     <div class="history-divider">WATCH HISTORY</div>
                 </div>
-                
                 <div id="continue-watching-list"></div>
             </div>
             
@@ -60,28 +57,18 @@
         <!-- CALENDAR TAB -->
         <div class="tab-content" id="calendar">
             <h2 style="margin-bottom: 20px; color: #1e3c72;">📅 Upcoming Episodes</h2>
-            
             <div class="calendar-section">
                 <h3 class="calendar-heading">Today</h3>
-                <div id="calendar-today" class="calendar-list">
-                    <p class="empty-state">Loading...</p>
-                </div>
+                <div id="calendar-today" class="calendar-list"><p class="empty-state">Loading...</p></div>
             </div>
-            
             <div class="calendar-section">
                 <h3 class="calendar-heading">This Week</h3>
-                <div id="calendar-week" class="calendar-list">
-                    <p class="empty-state">Loading...</p>
-                </div>
+                <div id="calendar-week" class="calendar-list"><p class="empty-state">Loading...</p></div>
             </div>
-            
             <div class="calendar-section">
                 <h3 class="calendar-heading">Upcoming</h3>
-                <div id="calendar-upcoming" class="calendar-list">
-                    <p class="empty-state">Loading...</p>
-                </div>
+                <div id="calendar-upcoming" class="calendar-list"><p class="empty-state">Loading...</p></div>
             </div>
-            
             <button id="refresh-calendar-btn" style="margin-top: 20px; padding: 12px 24px; background: #1e3c72; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
                 🔄 Refresh Calendar
             </button>
@@ -122,31 +109,27 @@
         <!-- STATS TAB -->
         <div class="tab-content" id="stats">
             <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>Total Movies</h3>
-                    <p class="stat-number" id="total-movies">0</p>
-                </div>
-                <div class="stat-card">
-                    <h3>Total TV Shows</h3>
-                    <p class="stat-number" id="total-shows">0</p>
-                </div>
-                <div class="stat-card">
-                    <h3>Episodes Watched</h3>
-                    <p class="stat-number" id="total-episodes">0</p>
-                </div>
-                <div class="stat-card">
-                    <h3>Favorites</h3>
-                    <p class="stat-number" id="total-favorites">0</p>
-                </div>
+                <div class="stat-card"><h3>Total Movies</h3><p class="stat-number" id="total-movies">0</p></div>
+                <div class="stat-card"><h3>Total TV Shows</h3><p class="stat-number" id="total-shows">0</p></div>
+                <div class="stat-card"><h3>Episodes Watched</h3><p class="stat-number" id="total-episodes">0</p></div>
+                <div class="stat-card"><h3>Favorites</h3><p class="stat-number" id="total-favorites">0</p></div>
             </div>
         </div>
     </div>
 
-    <!-- MODAL FOR DETAILS -->
+    <!-- MAIN DETAIL MODAL -->
     <div id="modal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content detail-modal">
             <span class="close">&times;</span>
             <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- EPISODE DETAIL MODAL -->
+    <div id="episode-modal" class="modal">
+        <div class="modal-content" style="max-width:600px;">
+            <span class="close" onclick="document.getElementById('episode-modal').style.display='none'">&times;</span>
+            <div id="episode-modal-body"></div>
         </div>
     </div>
 
@@ -155,7 +138,7 @@
         <div class="modal-content" style="max-width: 400px; text-align: center;">
             <h3 id="confirm-title" style="margin-bottom: 15px;"></h3>
             <p id="confirm-message" style="margin-bottom: 20px; color: #666;"></p>
-            <div style="display: flex; gap: 10px; justify-content: center;">
+            <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
                 <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
                 <button id="confirm-no" class="confirm-btn confirm-no">No</button>
                 <button id="confirm-cancel" class="confirm-btn" style="display:none;">Cancel</button>
