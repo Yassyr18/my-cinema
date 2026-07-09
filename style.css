@@ -505,3 +505,102 @@ nav {
         height: 180px;
     }
 }
+/* Calendar Styles */
+.calendar-section {
+    margin-bottom: 40px;
+}
+
+.calendar-heading {
+    color: #1e3c72;
+    font-size: 20px;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #1e3c72;
+}
+
+.calendar-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.calendar-item {
+    background: white;
+    border: 2px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 15px;
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    transition: all 0.3s;
+}
+
+.calendar-item:hover {
+    border-color: #1e3c72;
+    box-shadow: 0 4px 12px rgba(30, 60, 114, 0.15);
+}
+
+.calendar-item.airing-today {
+    border-color: #4CAF50;
+    background: #f1f8f4;
+}
+
+.calendar-item img {
+    width: 60px;
+    height: 90px;
+    object-fit: cover;
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+
+.calendar-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.calendar-item-info h4 {
+    margin: 0 0 5px 0;
+    color: #1e3c72;
+    font-size: 16px;
+}
+
+.calendar-item-info .episode-title {
+    color: #666;
+    font-size: 14px;
+    margin-bottom: 5px;
+}
+
+.calendar-item-info .air-date {
+    color: #999;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.calendar-item-info .air-date.today {
+    color: #4CAF50;
+    font-weight: 600;
+}
+
+.calendar-badge {
+    background: #4CAF50;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+@media (max-width: 768px) {
+    .calendar-item {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .calendar-item img {
+        width: 100px;
+        height: 150px;
+    }
+}
