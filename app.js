@@ -815,7 +815,7 @@ function createContinueCard(show, forcefade = false) {
     const airing = isCurrentlyAiring(show);
 
     return `
-        <div class="continue-card ${(isPaused || forceade) ? 'paused-card' : ''}">
+       <div class="continue-card ${(isPaused || forcefade) ? 'paused-card' : ''}">
             <img src="${poster}" alt="${show.title}"
                  onerror="this.src='https://via.placeholder.com/52x78?text=?'"
                  onclick="openDetails('${safeDocId}','tv')">
