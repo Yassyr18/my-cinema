@@ -16,6 +16,7 @@
     --blue: #2196F3;
     --nav-height: 65px;
     --top-bar-height: 60px;
+    --sub-tabs-height: 44px;
     --shadow: 0 2px 8px rgba(0,0,0,0.08);
     --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
 }
@@ -42,7 +43,7 @@ body {
     color: var(--text);
     min-height: 100vh;
     overscroll-behavior-y: contain;
-    padding-top: var(--top-bar-height);
+    padding-top: calc(var(--top-bar-height) + var(--sub-tabs-height) + 8px);
     padding-bottom: var(--nav-height);
 }
 
@@ -241,7 +242,7 @@ body {
 .section-page { display: none; }
 .section-page.active { display: block; }
 
-/* ===== SUB TABS ===== */
+/* ===== SUB TABS - STICKY BELOW TOP BAR ===== */
 .section-sub-tabs {
     display: flex;
     background: var(--surface);
@@ -251,9 +252,20 @@ body {
     box-shadow: var(--shadow);
     overflow-x: auto;
     gap: 4px;
-    position: sticky;
+    position: fixed;
     top: var(--top-bar-height);
-    z-index: 500;
+    left: 0;
+    right: 0;
+    z-index: 900;
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+    border-radius: 0;
+}
+
+/* Only show sub-tabs for the active section */
+.section-page:not(.active) .section-sub-tabs {
+    display: none;
 }
 
 .sub-tab-content {
@@ -283,9 +295,6 @@ body {
     background: var(--accent);
     color: white;
 }
-
-.sub-tab-content { display: none; }
-.sub-tab-content.active { display: block; }
 
 .swipeable-tabs { touch-action: pan-y; }
 
@@ -392,6 +401,21 @@ body {
 .media-card .in-list-btn { background: var(--accent); }
 
 /* ===== CONTINUE WATCHING ===== */
+.continue-section-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    padding: 12px 0 8px 4px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 8px;
+    margin-top: 4px;
+}
+
+.continue-section-label:first-child { margin-top: 0; }
+
+.continue-section-label.stale-label { color: var(--orange); border-bottom-color: var(--orange); }
+.continue-section-label.paused-label { color: var(--text3); border-bottom-color: var(--text3); }
+
 .continue-card {
     background: var(--surface);
     border-radius: 12px;
@@ -405,6 +429,10 @@ body {
 }
 
 .continue-card:hover { box-shadow: var(--shadow-lg); }
+
+.continue-card.stale-card {
+    border-left: 3px solid var(--orange);
+}
 
 .continue-card img {
     width: 52px;
@@ -470,6 +498,7 @@ body {
 }
 
 .quick-check-btn:hover { background: var(--accent); color: white; transform: scale(1.1); }
+
 /* ===== HISTORY ===== */
 .history-timeline-label {
     font-size: 14px;
@@ -1012,6 +1041,26 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
 
 .mark-all-btn:hover { background: rgba(255,255,255,0.35); }
 
+/* Sync Episodes Button */
+.sync-episodes-btn {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 16px;
+    background: var(--surface2);
+    border: 2px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    text-align: center;
+    transition: all 0.2s;
+}
+
+.sync-episodes-btn:hover { border-color: var(--accent); background: var(--accent); color: white; }
+.sync-episodes-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .episode {
     display: flex;
     justify-content: space-between;
@@ -1025,6 +1074,24 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
 .episode:hover { background: var(--surface2); }
 .episode.watched { background: #eafaf1; }
 [data-theme="dark"] .episode.watched { background: #1a2e1a; }
+
+/* Special episodes styling */
+.episode.special-episode {
+    border-left: 3px solid var(--orange);
+}
+
+.special-tag {
+    display: inline-block;
+    background: var(--orange);
+    color: white;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+    margin-right: 4px;
+}
 
 .episode-info { flex: 1; }
 .episode-number { font-weight: 700; color: var(--accent); font-size: 13px; }
@@ -1080,6 +1147,8 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
     z-index: 200;
     min-width: 180px;
     overflow: hidden;
+    max-height: 400px;
+    overflow-y: auto;
 }
 
 .options-menu.show { display: block; }
