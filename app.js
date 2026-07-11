@@ -23,7 +23,7 @@ let currentSearchType = 'multi';
 let tmdbCache = {};
 let currentSection = 'anime';
 let isLoading = false;
-let activeDetailTab = 'info-tab'; // Remember which tab is active
+let activeDetailTab = 'info-tab';
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', async () => {
@@ -34,6 +34,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupDarkMode();
     await loadMyList();
     setupRealtimeListeners();
+    // Auto-sync episodes for shows that might have new eps
+    setTimeout(() => autoSyncNewEpisodes(), 5000);
 });
 
 // ===== DARK MODE =====
@@ -254,6 +256,154 @@ async function tmdbFetch(url) {
     return data;
 }
 
+// ===== AUTO SYNC NEW EPISODES =====
+async function autoSyncNewEpisodes() {
+    const shows = myList.filter(i => i.type === 'tv' && i.tmdb_id);
+    const now = new Date();
+    
+    for (const show of shows) {
+        // Only sync shows that are returning or recently checked
+        if (!['Returning Series', 'In Production'].includes(show.tmdb_status) && 
+            show.tmdb_status !== 'Unknown') continue;
+        
+        // Only sync if last sync was more than 6 hours ago
+        const lastSync = show.last_episode_sync ? new Date(show.last_episode_sync) : new Date(0);
+        if (now - lastSync < 6 * 3600000) continue;
+        
+        try {
+            await syncShowEpisodes(show);
+            await new Promise(r => setTimeout(r, 500)); // Rate limit
+        } catch (e) {
+            console.error('Sync failed for', show.title, e);
+        }
+    }
+}
+
+async function syncShowEpisodes(show) {
+    if (!show.tmdb_id) return false;
+    
+    try {
+        const details = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}?api_key=${TMDB_API_KEY}`);
+        let hasChanges = false;
+        
+        // Update TMDB status
+        if (details.status && details.status !== show.tmdb_status) {
+            show.tmdb_status = details.status;
+            hasChanges = true;
+        }
+        
+        // Check each season for new episodes
+        const tmdbSeasonCount = details.number_of_seasons || 0;
+        
+        for (let sNum = 0; sNum <= tmdbSeasonCount; sNum++) {
+            try {
+                const seasonData = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}/season/${sNum}?api_key=${TMDB_API_KEY}`);
+                if (!seasonData.episodes?.length) continue;
+                
+                const localSeason = show.seasons?.find(s => s.number === sNum);
+                
+                if (!localSeason) {
+                    // Entire new season - add it
+                    if (!show.seasons) show.seasons = [];
+                    show.seasons.push({
+                        number: sNum,
+                        is_specials: sNum === 0,
+                        episodes: seasonData.episodes.map(ep => ({
+                            number: ep.episode_number,
+                            name: ep.name || `Episode ${ep.episode_number}`,
+                            is_watched: false,
+                            watched_at: null,
+                            rewatch_count: 0,
+                            rewatch_history: [],
+                            is_special: false
+                        }))
+                    });
+                    // Sort seasons by number
+                    show.seasons.sort((a, b) => a.number - b.number);
+                    hasChanges = true;
+                } else {
+                    // Check for new episodes in existing season
+                    const localEpNums = new Set(localSeason.episodes.map(e => e.number));
+                    
+                    for (const tmdbEp of seasonData.episodes) {
+                        if (!localEpNums.has(tmdbEp.episode_number)) {
+                            localSeason.episodes.push({
+                                number: tmdbEp.episode_number,
+                                name: tmdbEp.name || `Episode ${tmdbEp.episode_number}`,
+                                is_watched: false,
+                                watched_at: null,
+                                rewatch_count: 0,
+                                rewatch_history: [],
+                                is_special: false
+                            });
+                            hasChanges = true;
+                        } else {
+                            // Update episode name if it changed from generic
+                            const localEp = localSeason.episodes.find(e => e.number === tmdbEp.episode_number);
+                            if (localEp && tmdbEp.name && localEp.name !== tmdbEp.name) {
+                                const isGeneric = /^Episode \d+$/.test(localEp.name);
+                                if (isGeneric && tmdbEp.name) {
+                                    localEp.name = tmdbEp.name;
+                                    hasChanges = true;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Sort episodes by number
+                    localSeason.episodes.sort((a, b) => a.number - b.number);
+                }
+                
+                await new Promise(r => setTimeout(r, 300)); // Rate limit
+            } catch (e) {}
+        }
+        
+        if (hasChanges) {
+            show.last_episode_sync = new Date().toISOString();
+            await updateDoc(doc(db, 'series', show.docId), {
+                seasons: show.seasons,
+                tmdb_status: show.tmdb_status,
+                last_episode_sync: show.last_episode_sync
+            });
+            return true;
+        } else {
+            // Just update sync time
+            show.last_episode_sync = new Date().toISOString();
+            await updateDoc(doc(db, 'series', show.docId), {
+                last_episode_sync: show.last_episode_sync
+            });
+        }
+    } catch (e) {
+        console.error('Sync error:', e);
+    }
+    return false;
+}
+
+// Manual sync from details page
+async function manualSyncEpisodes(docId) {
+    const item = myList.find(i => i.docId === docId);
+    if (!item) return;
+    
+    const btn = event?.target;
+    if (btn) { btn.textContent = '⏳ Syncing...'; btn.disabled = true; }
+    
+    try {
+        // Clear cache for this show to get fresh data
+        const cacheKeysToDelete = Object.keys(tmdbCache).filter(k => k.includes(`/tv/${item.tmdb_id}`));
+        cacheKeysToDelete.forEach(k => delete tmdbCache[k]);
+        
+        const changed = await syncShowEpisodes(item);
+        if (changed) {
+            await loadMyList();
+            openDetails(docId, 'tv', 'episodes-tab');
+        } else {
+            if (btn) { btn.textContent = '✓ Up to date'; setTimeout(() => { btn.textContent = '🔄 Sync Episodes'; btn.disabled = false; }, 2000); }
+        }
+    } catch (e) {
+        if (btn) { btn.textContent = '✗ Failed'; btn.disabled = false; }
+    }
+}
+
 // ===== LOAD MY LIST =====
 async function loadMyList() {
     if (isLoading) return;
@@ -284,7 +434,11 @@ function getShowProgressExcludingSpecials(show) {
     let total = 0, watched = 0;
     show.seasons.forEach(s => {
         if (s.number === 0) return;
-        s.episodes?.forEach(ep => { total++; if (ep.is_watched) watched++; });
+        s.episodes?.forEach(ep => {
+            if (ep.is_special) return; // Skip tagged specials
+            total++;
+            if (ep.is_watched) watched++;
+        });
     });
     return total > 0 ? (watched / total) * 100 : 0;
 }
@@ -294,6 +448,7 @@ function getNextEpisodeExcludingSpecials(show) {
     for (const s of show.seasons) {
         if (s.number === 0) continue;
         for (const ep of (s.episodes || [])) {
+            if (ep.is_special) continue; // Skip tagged specials
             if (!ep.is_watched) return { season: s.number, number: ep.number, name: ep.name || `Episode ${ep.number}` };
         }
     }
@@ -317,7 +472,7 @@ function getAllWatchedEpisodes(shows) {
             if (s.number === 0) return;
             s.episodes?.forEach(ep => {
                 if (ep.is_watched && ep.watched_at) {
-                    eps.push({ show: show.title, poster: show.poster, docId: show.docId, season: s.number, episode: ep.number, name: ep.name, watched_at: ep.watched_at });
+                    eps.push({ show: show.title, poster: show.poster, docId: show.docId, season: s.number, episode: ep.number, name: ep.name, watched_at: ep.watched_at, is_special: ep.is_special });
                 }
             });
         });
@@ -333,6 +488,7 @@ function getPreviousUnwatchedEpisodes(show, targetSeason, targetEp) {
         if (s.number === 0) continue;
         if (s.number > targetSeason) break;
         for (const ep of (s.episodes || [])) {
+            if (ep.is_special) continue; // Skip specials
             if (s.number === targetSeason && ep.number >= targetEp) break;
             if (!ep.is_watched) unwatched.push({ seasonNum: s.number, episodeNum: ep.number });
         }
@@ -379,7 +535,7 @@ function autoTagStatusesSilent() {
     myList.forEach(item => {
         if (item.type !== 'tv') return;
         const progress = getShowProgressExcludingSpecials(item);
-        const hasWatched = item.seasons?.some(s => s.number !== 0 && s.episodes?.some(e => e.is_watched));
+        const hasWatched = item.seasons?.some(s => s.number !== 0 && s.episodes?.some(e => !e.is_special && e.is_watched));
         const tmdb = item.tmdb_status || '';
         let newStatus = item.user_status;
 
@@ -405,6 +561,7 @@ function renderAllSections() {
     renderLibrary('tv');
     renderLibrary('movies');
 }
+
 // ===== CONTINUE WATCHING =====
 function renderContinueWatching(sectionType) {
     const isAnime = sectionType === 'anime';
@@ -412,15 +569,19 @@ function renderContinueWatching(sectionType) {
     if (!container) return;
 
     const shows = isAnime ? getAnime() : getTVShows();
+    const twoMonthsAgo = new Date();
+    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
 
-    // Filter: has progress, NOT dropped, NOT planned
+    // Filter: has progress, NOT dropped, NOT planned, NOT finished, NOT up to date
     const inProgress = shows.filter(item => {
         if (!item.seasons?.length) return false;
-        if (item.user_status === 'Dropped') return false; // Exclude dropped
+        if (item.user_status === 'Dropped') return false;
+        if (item.user_status === 'Planned') return false;
         let hasWatched = false, hasUnwatched = false;
         item.seasons.forEach(s => {
             if (s.number === 0) return;
             s.episodes?.forEach(ep => {
+                if (ep.is_special) return;
                 if (ep.is_watched) hasWatched = true;
                 else hasUnwatched = true;
             });
@@ -433,24 +594,85 @@ function renderContinueWatching(sectionType) {
         return;
     }
 
-    // Sort: Ongoing first (by next air date), then non-ongoing (by last watched), Paused at bottom
-    const ongoing = inProgress.filter(s => s.tmdb_status === 'Returning Series' && s.user_status !== 'Paused');
-    const nonOngoing = inProgress.filter(s => s.tmdb_status !== 'Returning Series' && s.user_status !== 'Paused');
+    // Categorize shows
     const paused = inProgress.filter(s => s.user_status === 'Paused');
+    const active = inProgress.filter(s => s.user_status !== 'Paused');
+    
+    // Split active into: ongoing (currently airing), haven't watched in a while, and regular
+    const ongoing = [];
+    const notWatchedInAWhile = [];
+    const regular = [];
+    
+    active.forEach(show => {
+        const lastWatched = new Date(getLastWatchedDate(show));
+        const isOngoing = show.tmdb_status === 'Returning Series';
+        
+        if (isOngoing) {
+            ongoing.push(show);
+        } else if (lastWatched < twoMonthsAgo) {
+            notWatchedInAWhile.push(show);
+        } else {
+            regular.push(show);
+        }
+    });
+    
+    // Also check: ongoing shows where user hasn't watched in 2 months
+    // but show is still airing -> keep in ongoing section
+    // ongoing shows where user hasn't watched in 2 months AND show finished airing -> move to "haven't watched"
+    const ongoingFinal = [];
+    ongoing.forEach(show => {
+        const lastWatched = new Date(getLastWatchedDate(show));
+        if (lastWatched < twoMonthsAgo) {
+            // Check if show is currently airing (has recent or upcoming episodes)
+            // For simplicity, if it's "Returning Series", keep it in ongoing
+            ongoingFinal.push(show);
+        } else {
+            ongoingFinal.push(show);
+        }
+    });
 
-    // Sort ongoing by show title (proxy for air date since we don't store next air date locally)
-    ongoing.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-    // Sort non-ongoing by last watched (most recent first)
-    nonOngoing.sort((a, b) => new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a)));
+    // Sort ongoing by title (we'll enhance with air dates when available)
+    ongoingFinal.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    
+    // Sort regular by last watched (most recent first)
+    regular.sort((a, b) => new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a)));
+    
+    // Sort haven't watched by last watched
+    notWatchedInAWhile.sort((a, b) => new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a)));
+    
     // Sort paused by last watched
     paused.sort((a, b) => new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a)));
 
-    const sorted = [...ongoing, ...nonOngoing, ...paused];
+    let html = '';
+    
+    // Section 1: Ongoing shows
+    if (ongoingFinal.length) {
+        html += `<div class="continue-section-label">🟢 Currently Airing</div>`;
+        html += ongoingFinal.map(s => createContinueCard(s)).join('');
+    }
+    
+    // Section 2: Regular in-progress
+    if (regular.length) {
+        if (ongoingFinal.length) html += `<div class="continue-section-label">📺 In Progress</div>`;
+        html += regular.map(s => createContinueCard(s)).join('');
+    }
+    
+    // Section 3: Haven't watched in a while
+    if (notWatchedInAWhile.length) {
+        html += `<div class="continue-section-label stale-label">⏰ Haven't Watched in a While</div>`;
+        html += notWatchedInAWhile.map(s => createContinueCard(s, true)).join('');
+    }
+    
+    // Section 4: Paused
+    if (paused.length) {
+        html += `<div class="continue-section-label paused-label">⏸ Paused</div>`;
+        html += paused.map(s => createContinueCard(s)).join('');
+    }
 
-    container.innerHTML = sorted.map(s => createContinueCard(s)).join('');
+    container.innerHTML = html;
 }
 
-function createContinueCard(show) {
+function createContinueCard(show, isStale = false) {
     const nextEp = getNextEpisodeExcludingSpecials(show);
     const progress = getShowProgressExcludingSpecials(show);
     const safeDocId = show.docId.replace(/'/g, "\\'");
@@ -461,9 +683,13 @@ function createContinueCard(show) {
         : 'Up to date';
     const isPaused = show.user_status === 'Paused';
     const isOngoing = show.tmdb_status === 'Returning Series';
+    
+    // Show last watched date for stale shows
+    const lastDate = getLastWatchedDate(show);
+    const lastDateStr = lastDate && lastDate !== '2000-01-01' ? new Date(lastDate).toLocaleDateString() : '';
 
     return `
-        <div class="continue-card ${isPaused ? 'paused-card' : ''}">
+        <div class="continue-card ${isPaused ? 'paused-card' : ''} ${isStale ? 'stale-card' : ''}">
             <img src="${poster}" alt="${show.title}"
                  onerror="this.src='https://via.placeholder.com/52x78?text=?'"
                  onclick="openDetails('${safeDocId}','tv')">
@@ -473,6 +699,7 @@ function createContinueCard(show) {
                     ${isPaused ? '⏸ ' : ''}${isOngoing ? '🟢 ' : ''}${epCode}
                 </div>
                 ${nextEp ? `<div class="episode-name">${nextEp.name}</div>` : ''}
+                ${isStale && lastDateStr ? `<div class="episode-name" style="color:var(--orange);font-size:10px;">Last: ${lastDateStr}</div>` : ''}
                 <div class="continue-progress">
                     <div class="continue-progress-fill ${progress >= 100 ? 'uptodate' : 'watching'}"
                          style="width:${progress}%;"></div>
@@ -513,7 +740,9 @@ function renderHistory(sectionType) {
             const poster = ep.poster && !ep.poster.includes('placeholder')
                 ? ep.poster : 'https://via.placeholder.com/44x66?text=?';
             const safeDocId = ep.docId.replace(/'/g, "\\'");
-            const epCode = `S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')}`;
+            const epCode = ep.is_special 
+                ? `Special` 
+                : `S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')}`;
             const dateStr = new Date(ep.watched_at).toLocaleDateString();
             return `
                 <div class="history-card">
@@ -623,7 +852,10 @@ function updateProfilePage() {
         let t = 0;
         list.forEach(s => s.seasons?.forEach(season => {
             if (season.number === 0) return;
-            season.episodes?.forEach(ep => { if (ep.is_watched) t++; });
+            season.episodes?.forEach(ep => { 
+                if (ep.is_special) return;
+                if (ep.is_watched) t++; 
+            });
         }));
         return t;
     }
@@ -732,7 +964,7 @@ function showConfirm(title, message, yesText = 'Yes', noText = 'No', showCancel 
     });
 }
 
-// ===== PREVIEW (search/similar) =====
+// ===== PREVIEW =====
 async function openPreview(tmdbId, type, title, year, poster) {
     hideSearchOverlay();
     const modal = document.getElementById('preview-modal');
@@ -740,10 +972,8 @@ async function openPreview(tmdbId, type, title, year, poster) {
     body.innerHTML = '<p class="empty-state">Loading...</p>';
     modal.style.display = 'block';
 
-    // Check if in library
     const libraryItem = myList.find(i => i.tmdb_id === tmdbId);
     if (libraryItem) {
-        // Open full detail page instead
         modal.style.display = 'none';
         openDetails(libraryItem.docId, libraryItem.type);
         return;
@@ -773,7 +1003,6 @@ async function openPreview(tmdbId, type, title, year, poster) {
     const statusColor = { 'Returning Series': '#4CAF50', 'In Production': '#2196F3', 'Ended': '#666', 'Canceled': '#f44336', 'Released': '#4CAF50' }[tmdbStatus] || '#666';
     const runtime = type === 'movie' && details?.runtime ? `${Math.floor(details.runtime/60)}h ${details.runtime%60}m` : null;
 
-    // For TV shows not in library, show episode list from TMDB
     let episodesPreviewHTML = '';
     if (type === 'tv' && details?.number_of_seasons) {
         episodesPreviewHTML = `
@@ -829,7 +1058,6 @@ async function openPreview(tmdbId, type, title, year, poster) {
 async function handlePreviewAdd(tmdbId, type, title, year, poster) {
     await addToList(tmdbId, type, title, year, poster);
     document.getElementById('preview-modal').style.display = 'none';
-    // Open full details now that it's in library
     const item = myList.find(i => i.tmdb_id === tmdbId);
     if (item) openDetails(item.docId, item.type);
 }
@@ -843,7 +1071,6 @@ async function openDetails(docId, type, forceTab) {
     body.innerHTML = '<p class="empty-state">Loading...</p>';
     modal.style.display = 'block';
 
-    // Remember tab or use forced tab
     if (forceTab) activeDetailTab = forceTab;
 
     if (type === 'movie') await openMovieDetails(item, body, docId.replace(/'/g, "\\'"));
@@ -935,7 +1162,11 @@ async function openTVDetails(item, body, safeDocId) {
     let watchedCount = 0, totalCount = 0;
     item.seasons?.forEach(s => {
         if (s.number === 0) return;
-        s.episodes?.forEach(ep => { totalCount++; if (ep.is_watched) watchedCount++; });
+        s.episodes?.forEach(ep => { 
+            if (ep.is_special) return;
+            totalCount++; 
+            if (ep.is_watched) watchedCount++; 
+        });
     });
 
     let episodeRatings = [];
@@ -955,7 +1186,6 @@ async function openTVDetails(item, body, safeDocId) {
             </div>
         </div>` : '';
 
-    // Determine which tab to show
     const infoActive = activeDetailTab === 'info-tab';
 
     body.innerHTML = `
@@ -975,6 +1205,7 @@ async function openTVDetails(item, body, safeDocId) {
                             <button onclick="setUserStatus('${safeDocId}','Finished')">🏁 Finished</button>
                             <button onclick="setUserStatus('${safeDocId}','Planned')">📋 Planned</button>
                             <button onclick="toggleAnimeStatus('${safeDocId}')">${item.is_anime ? '🎌 Remove Anime' : '🎌 Mark Anime'}</button>
+                            <button onclick="openSpecialsTagger('${safeDocId}')">🏷️ Tag Specials</button>
                             <button class="danger" onclick="removeFromList('${safeDocId}','tv')">🗑 Remove</button>
                         </div>
                     </div>
@@ -1007,6 +1238,7 @@ async function openTVDetails(item, body, safeDocId) {
                 ${buildSimilarSection(similarItems, 'tv')}
             </div>
             <div class="detail-tab-content ${!infoActive ? 'active' : ''}" id="episodes-tab">
+                <button onclick="manualSyncEpisodes('${safeDocId}')" class="sync-episodes-btn">🔄 Sync Episodes</button>
                 ${seasonsHTML}
                 ${specialsHTML}
             </div>
@@ -1026,9 +1258,20 @@ function toggleSeason(header) {
 }
 
 function buildSeasonHTML(season, safeDocId) {
-    const watched = season.episodes?.filter(e => e.is_watched).length || 0;
-    const total = season.episodes?.length || 0;
+    const regularEps = season.episodes?.filter(e => !e.is_special) || [];
+    const specialEps = season.episodes?.filter(e => e.is_special) || [];
+    const watched = regularEps.filter(e => e.is_watched).length;
+    const total = regularEps.length;
     const allWatched = watched === total && total > 0;
+    
+    let epsHTML = regularEps.map(ep => buildEpisodeHTML(ep, season.number, safeDocId, false)).join('');
+    
+    // Show tagged specials at the end of the season
+    if (specialEps.length) {
+        epsHTML += `<div style="padding:8px 12px;color:var(--text3);font-size:12px;font-weight:700;border-top:2px solid var(--border);margin-top:4px;">SPECIALS</div>`;
+        epsHTML += specialEps.map(ep => buildEpisodeHTML(ep, season.number, safeDocId, false)).join('');
+    }
+    
     return `
         <div class="season">
             <div class="season-header" onclick="toggleSeason(this)">
@@ -1041,24 +1284,28 @@ function buildSeasonHTML(season, safeDocId) {
                 </div>
             </div>
             <div class="season-body">
-                ${season.episodes?.map(ep => buildEpisodeHTML(ep, season.number, safeDocId, false)).join('') || '<p>No episodes</p>'}
+                ${epsHTML || '<p>No episodes</p>'}
             </div>
         </div>
     `;
 }
 
-// isSpecial flag to use SE prefix
-function buildEpisodeHTML(ep, seasonNum, safeDocId, isSpecial) {
-    const prefix = isSpecial || seasonNum === 0 ? 'SE' : 'E';
-    // Use unique identifier: season_episode to avoid conflicts
-    const uniqueId = `${seasonNum}_${ep.number}`;
+function buildEpisodeHTML(ep, seasonNum, safeDocId, isSeasonZero) {
+    const isSpecial = ep.is_special || isSeasonZero;
+    
+    // For specials: show just the name + SPECIAL tag, no E## numbering
+    let displayLabel;
+    if (isSpecial) {
+        displayLabel = `<span class="special-tag">SPECIAL</span> ${ep.name || 'Special Episode'}`;
+    } else {
+        displayLabel = `<span class="episode-number">E${String(ep.number).padStart(2,'0')}</span> - ${ep.name || 'Episode ' + ep.number}`;
+    }
 
     return `
-        <div class="episode ${ep.is_watched ? 'watched' : ''}"
+        <div class="episode ${ep.is_watched ? 'watched' : ''} ${isSpecial ? 'special-episode' : ''}"
              onclick="openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number})">
             <div class="episode-info">
-                <span class="episode-number">${prefix}${String(ep.number).padStart(2,'0')}</span>
-                - ${ep.name || 'Episode ' + ep.number}
+                ${displayLabel}
                 ${ep.watched_at ? `<br><small style="color:var(--text3);">${new Date(ep.watched_at).toLocaleDateString()}</small>` : ''}
                 ${ep.rewatch_count > 0 ? `<br><small style="color:#2196F3;">↺ ${ep.rewatch_count}x</small>` : ''}
             </div>
@@ -1069,6 +1316,87 @@ function buildEpisodeHTML(ep, seasonNum, safeDocId, isSpecial) {
         </div>
     `;
 }
+
+// ===== SPECIALS TAGGER =====
+async function openSpecialsTagger(docId) {
+    const item = myList.find(i => i.docId === docId);
+    if (!item) return;
+    
+    // Close the options menu
+    document.querySelectorAll('.options-menu').forEach(m => m.classList.remove('show'));
+    
+    const modal = document.getElementById('bulk-modal');
+    const body = document.getElementById('bulk-modal-body');
+    
+    let allEps = [];
+    item.seasons?.forEach(s => {
+        s.episodes?.forEach(ep => {
+            allEps.push({ season: s.number, episode: ep.number, name: ep.name, is_special: ep.is_special || s.number === 0 });
+        });
+    });
+    
+    body.innerHTML = `
+        <h2 style="margin-bottom:10px;color:var(--accent);">🏷️ Tag Specials</h2>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:15px;">${item.title} — Select episodes to tag as specials. Tagged episodes won't count toward progress.</p>
+        <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;">
+            <select id="specials-season-filter" onchange="filterSpecialsList()">
+                <option value="all">All Seasons</option>
+                ${[...new Set(allEps.map(e => e.season))].sort((a,b) => a-b).map(s => `<option value="${s}">${s === 0 ? 'Specials' : 'Season ' + s}</option>`).join('')}
+            </select>
+        </div>
+        <div class="bulk-list" id="specials-list" style="max-height:400px;overflow-y:auto;">
+            ${allEps.map(ep => `
+                <div class="bulk-item specials-item" data-season="${ep.season}">
+                    <input type="checkbox" ${ep.is_special ? 'checked' : ''} data-season="${ep.season}" data-episode="${ep.episode}">
+                    <span class="bulk-item-title" style="flex:1;">
+                        ${ep.season === 0 ? '' : `S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} - `}${ep.name}
+                    </span>
+                    ${ep.is_special ? '<span style="color:var(--orange);font-size:11px;font-weight:700;">SPECIAL</span>' : ''}
+                </div>
+            `).join('')}
+        </div>
+        <div class="bulk-actions">
+            <button onclick="applySpecialsTags('${docId.replace(/'/g, "\\'")}')">💾 Save Tags</button>
+        </div>
+    `;
+    
+    modal.style.display = 'block';
+}
+
+function filterSpecialsList() {
+    const filter = document.getElementById('specials-season-filter').value;
+    document.querySelectorAll('.specials-item').forEach(item => {
+        if (filter === 'all') item.style.display = 'flex';
+        else item.style.display = item.dataset.season === filter ? 'flex' : 'none';
+    });
+}
+
+async function applySpecialsTags(docId) {
+    const item = myList.find(i => i.docId === docId);
+    if (!item) return;
+    
+    const checkboxes = document.querySelectorAll('#specials-list input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        const sNum = parseInt(cb.dataset.season);
+        const eNum = parseInt(cb.dataset.episode);
+        const season = item.seasons?.find(s => s.number === sNum);
+        const episode = season?.episodes?.find(e => e.number === eNum);
+        if (episode) {
+            episode.is_special = cb.checked;
+        }
+    });
+    
+    try {
+        await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
+        document.getElementById('bulk-modal').style.display = 'none';
+        await loadMyList();
+        openDetails(docId, 'tv', activeDetailTab);
+    } catch (e) {
+        console.error(e);
+        alert('Failed to save tags.');
+    }
+}
+
 // ===== EPISODE RATINGS =====
 async function fetchEpisodeRatings(tmdbId, localSeasons) {
     const ratings = [];
@@ -1124,11 +1452,10 @@ function buildSimilarSection(items, type) {
 
 // ===== DETAIL TABS =====
 function switchDetailTab(tabId) {
-    activeDetailTab = tabId; // Remember active tab
+    activeDetailTab = tabId;
     document.querySelectorAll('.detail-tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.detail-tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(tabId)?.classList.add('active');
-    // Also check preview tabs
     document.getElementById('preview-info-tab')?.classList.remove('active');
     document.getElementById('preview-episodes-tab')?.classList.remove('active');
     if (tabId === 'preview-info-tab' || tabId === 'preview-episodes-tab') {
@@ -1167,8 +1494,8 @@ async function openEpisodeDetail(docId, seasonNum, episodeNum) {
     epBody.innerHTML = '<p class="empty-state">Loading...</p>';
     epModal.style.display = 'block';
 
-    const isSpecial = seasonNum === 0;
-    const prefix = isSpecial ? 'SE' : 'E';
+    const localEp = item.seasons?.find(s => s.number === seasonNum)?.episodes?.find(e => e.number === episodeNum);
+    const isSpecial = localEp?.is_special || seasonNum === 0;
 
     try {
         const data = await tmdbFetch(`${TMDB_BASE_URL}/tv/${item.tmdb_id}/season/${seasonNum}/episode/${episodeNum}?api_key=${TMDB_API_KEY}&append_to_response=credits`);
@@ -1176,15 +1503,18 @@ async function openEpisodeDetail(docId, seasonNum, episodeNum) {
         const r = data.vote_average ? data.vote_average.toFixed(1) : 'N/A';
         const air = data.air_date ? new Date(data.air_date).toLocaleDateString() : 'N/A';
         const allCast = [...(data.guest_stars||[]),...(data.credits?.cast||[])].slice(0,12);
-        const localEp = item.seasons?.find(s => s.number === seasonNum)?.episodes?.find(e => e.number === episodeNum);
         const sd = docId.replace(/'/g, "\\'");
+
+        const epLabel = isSpecial 
+            ? `Special` 
+            : `S${String(seasonNum).padStart(2,'0')}E${String(episodeNum).padStart(2,'0')}`;
 
         epBody.innerHTML = `
             <div class="ep-detail-header">
                 ${still ? `<img src="${still}" onerror="this.style.display='none'">` : ''}
                 <div class="ep-detail-info">
                     <h3>${data.name||`Episode ${episodeNum}`}</h3>
-                    <div class="ep-code">S${String(seasonNum).padStart(2,'0')}${prefix}${String(episodeNum).padStart(2,'0')}</div>
+                    <div class="ep-code">${epLabel} ${isSpecial ? '<span class="special-tag">SPECIAL</span>' : ''}</div>
                     <div class="ep-rating">⭐ ${r}/10 <small style="color:var(--text3);">TMDB</small></div>
                     <p style="color:var(--text2);font-size:13px;">📅 ${air}</p>
                     ${data.runtime ? `<p style="color:var(--text2);font-size:13px;">⏱ ${data.runtime}min</p>` : ''}
@@ -1215,13 +1545,26 @@ async function addToList(tmdbId, type, title, year, poster) {
             data.user_status = 'Planned';
             data.tmdb_status = det.status || 'Unknown';
             data.last_status_check = new Date().toISOString();
+            data.last_episode_sync = new Date().toISOString();
             data.is_anime = isAnimeShow(det);
             data.tmdb_rating = det.vote_average || null;
             data.seasons = [];
             for (let i = 0; i <= det.number_of_seasons; i++) {
                 try {
                     const sd = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}/season/${i}?api_key=${TMDB_API_KEY}`);
-                    if (sd.episodes?.length) data.seasons.push({ number: i, is_specials: i===0, episodes: sd.episodes.map(ep => ({ number: ep.episode_number, name: ep.name, is_watched: false, watched_at: null, rewatch_count: 0, rewatch_history: [] })) });
+                    if (sd.episodes?.length) data.seasons.push({ 
+                        number: i, 
+                        is_specials: i===0, 
+                        episodes: sd.episodes.map(ep => ({ 
+                            number: ep.episode_number, 
+                            name: ep.name, 
+                            is_watched: false, 
+                            watched_at: null, 
+                            rewatch_count: 0, 
+                            rewatch_history: [],
+                            is_special: i === 0 // Auto-tag season 0 episodes as specials
+                        })) 
+                    });
                 } catch (e) {}
             }
         } else {
@@ -1248,17 +1591,15 @@ async function removeFromList(docId, type) {
 
 async function removeFromListByTMDB(tmdbId, type) { await removeFromList(`${type}_${tmdbId}`, type); }
 
-// ===== TOGGLE EPISODE (uses season number to find correct episode) =====
+// ===== TOGGLE EPISODE =====
 async function toggleEpisode(docId, seasonNum, episodeNum) {
     const item = myList.find(i => i.docId === docId);
     if (!item) return;
-    // Find by EXACT season number to avoid specials conflict
     const season = item.seasons.find(s => s.number === seasonNum);
     if (!season) return;
     const episode = season.episodes.find(e => e.number === episodeNum);
     if (!episode) return;
 
-    // Remember we're on episodes tab
     activeDetailTab = 'episodes-tab';
 
     if (episode.is_watched) {
@@ -1273,8 +1614,8 @@ async function toggleEpisode(docId, seasonNum, episodeNum) {
             episode.watched_at = null;
         } else return;
     } else {
-        // Only check previous for non-specials
-        if (seasonNum !== 0) {
+        // Only check previous for non-specials in non-special seasons
+        if (seasonNum !== 0 && !episode.is_special) {
             const prev = getPreviousUnwatchedEpisodes(item, seasonNum, episodeNum);
             if (prev.length > 0) {
                 const a = await showConfirm('Mark Previous?', `${prev.length} unwatched before this.`, 'Yes, all', 'Just this');
@@ -1292,7 +1633,7 @@ async function toggleEpisode(docId, seasonNum, episodeNum) {
     try {
         await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
         await loadMyList();
-        openDetails(docId, 'tv', 'episodes-tab'); // Stay on episodes tab
+        openDetails(docId, 'tv', 'episodes-tab');
     } catch (e) { console.error(e); }
 }
 
@@ -1302,37 +1643,45 @@ async function markSeasonWatched(docId, seasonNum) {
     if (!item) return;
     const season = item.seasons.find(s => s.number === seasonNum);
     if (!season) return;
-    const allWatched = season.episodes.every(e => e.is_watched);
+    
+    // Only consider non-special episodes for "mark all"
+    const regularEps = season.episodes.filter(e => !e.is_special);
+    const allWatched = regularEps.every(e => e.is_watched);
 
-    activeDetailTab = 'episodes-tab'; // Stay on episodes
+    activeDetailTab = 'episodes-tab';
 
     if (allWatched) {
         const a = await showConfirm('All Watched', 'What to do?', '↺ Rewatch All', '✗ Unmark All');
         if (a === 'yes') {
-            season.episodes.forEach(ep => {
+            regularEps.forEach(ep => {
                 ep.rewatch_count = (ep.rewatch_count||0)+1;
                 if (!ep.rewatch_history) ep.rewatch_history = [];
                 ep.rewatch_history.push(new Date().toISOString());
                 ep.watched_at = new Date().toISOString();
             });
         } else if (a === 'no') {
-            season.episodes.forEach(ep => { ep.is_watched = false; ep.watched_at = null; });
+            regularEps.forEach(ep => { ep.is_watched = false; ep.watched_at = null; });
         } else return;
     } else {
         if (seasonNum !== 0) {
-            const prevSeasons = item.seasons.filter(s => s.number !== 0 && s.number < seasonNum && s.episodes?.some(e => !e.is_watched));
+            const prevSeasons = item.seasons.filter(s => s.number !== 0 && s.number < seasonNum && s.episodes?.some(e => !e.is_special && !e.is_watched));
             if (prevSeasons.length > 0) {
                 const a = await showConfirm('Previous Seasons?', `${prevSeasons.length} season(s) have unwatched eps.`, 'Mark all prev', 'Just this');
-                if (a === 'yes') prevSeasons.forEach(s => s.episodes.forEach(ep => { ep.is_watched = true; ep.watched_at = new Date().toISOString(); }));
+                if (a === 'yes') prevSeasons.forEach(s => s.episodes.forEach(ep => { 
+                    if (!ep.is_special) {
+                        ep.is_watched = true; 
+                        ep.watched_at = new Date().toISOString(); 
+                    }
+                }));
             }
         }
-        season.episodes.forEach(ep => { ep.is_watched = true; ep.watched_at = new Date().toISOString(); });
+        regularEps.forEach(ep => { ep.is_watched = true; ep.watched_at = new Date().toISOString(); });
     }
 
     try {
         await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
         await loadMyList();
-        openDetails(docId, 'tv', 'episodes-tab'); // Stay on episodes tab
+        openDetails(docId, 'tv', 'episodes-tab');
     } catch (e) { console.error(e); }
 }
 
@@ -1392,6 +1741,7 @@ async function toggleAnimeStatus(docId) {
         openDetails(docId, 'tv');
     } catch (e) { console.error(e); }
 }
+
 // ===== CALENDAR =====
 async function loadSectionCalendar(section) {
     const isAnime = section === 'anime';
@@ -1498,7 +1848,7 @@ async function autoTagStatuses() {
     for (const item of myList) {
         if (item.type !== 'tv') continue;
         const progress = getShowProgressExcludingSpecials(item);
-        const hasWatched = item.seasons?.some(s => s.number !== 0 && s.episodes?.some(e => e.is_watched));
+        const hasWatched = item.seasons?.some(s => s.number !== 0 && s.episodes?.some(e => !e.is_special && e.is_watched));
         const tmdb = item.tmdb_status || '';
         let newStatus = item.user_status;
 
@@ -1632,6 +1982,7 @@ function renderStats(section) {
         item.seasons?.forEach(s => {
             if (s.number === 0) return;
             s.episodes?.forEach(ep => {
+                if (ep.is_special) return;
                 if (ep.is_watched) {
                     totalEps++;
                     if (ep.watched_at) {
@@ -1646,7 +1997,7 @@ function renderStats(section) {
 
     const finishedCount = (statusCounts['Finished']||0)+(statusCounts['Up to Date']||0);
     const remaining = items.reduce((sum,item) => {
-        let rem=0; item.seasons?.forEach(s=>{if(s.number===0)return;s.episodes?.forEach(ep=>{if(!ep.is_watched)rem++;});}); return sum+rem;
+        let rem=0; item.seasons?.forEach(s=>{if(s.number===0)return;s.episodes?.forEach(ep=>{if(!ep.is_special && !ep.is_watched)rem++;});}); return sum+rem;
     }, 0);
 
     const monthKeys = Object.keys(monthCounts).sort();
@@ -1795,8 +2146,8 @@ async function importSeries() {
                 if(!tmdbId&&show.title){try{const clean=show.title.replace(/\s*\(\d{4}\)\s*$/,'');const d=await tmdbFetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(clean)}`);if(d.results?.length){tmdbId=d.results[0].id;poster=d.results[0].poster_path?TMDB_IMG_BASE+d.results[0].poster_path:poster;tmdbRating=d.results[0].vote_average||null;}}catch(e){}}
                 if(tmdbId){try{const det=await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);tmdbStatus=det.status||'Unknown';anime=isAnimeShow(det);if(!tmdbRating)tmdbRating=det.vote_average||null;}catch(e){}}
                 const statusMap={'up_to_date':'Up to Date','watching':'Watching','watched':'Finished','dropped':'Dropped','on_hold':'Paused','plan_to_watch':'Planned'};
-                const seasons=show.seasons?.map(s=>({number:s.number,is_specials:s.number===0,episodes:(s.episodes||[]).map(ep=>({number:ep.number,name:ep.name||`Episode ${ep.number}`,is_watched:ep.is_watched||false,watched_at:ep.watched_at||null,rewatch_count:ep.rewatch_count||0,rewatch_history:[],watched_count:ep.watched_count||0}))}))||[];
-                await setDoc(doc(db,'series',docId),{tmdb_id:tmdbId,imdb_id:show.id.imdb,tvdb_id:show.id.tvdb,title:show.title,year:show.year||null,poster,tmdb_rating:tmdbRating,user_status:statusMap[show.status]||'Watching',tmdb_status:tmdbStatus,last_status_check:new Date().toISOString(),is_favorite:show.is_favorite||false,is_anime:anime,seasons,created_at:show.created_at||new Date().toISOString()});
+                const seasons=show.seasons?.map(s=>({number:s.number,is_specials:s.number===0,episodes:(s.episodes||[]).map(ep=>({number:ep.number,name:ep.name||`Episode ${ep.number}`,is_watched:ep.is_watched||false,watched_at:ep.watched_at||null,rewatch_count:ep.rewatch_count||0,rewatch_history:[],watched_count:ep.watched_count||0,is_special:s.number===0}))}))||[];
+                await setDoc(doc(db,'series',docId),{tmdb_id:tmdbId,imdb_id:show.id.imdb,tvdb_id:show.id.tvdb,title:show.title,year:show.year||null,poster,tmdb_rating:tmdbRating,user_status:statusMap[show.status]||'Watching',tmdb_status:tmdbStatus,last_status_check:new Date().toISOString(),last_episode_sync:new Date().toISOString(),is_favorite:show.is_favorite||false,is_anime:anime,seasons,created_at:show.created_at||new Date().toISOString()});
                 imp++; st.textContent=`Importing... ${imp}/${series.length} (${fail} failed)`;
                 if(imp%20===0) await new Promise(r=>setTimeout(r,1500));
             } catch(e){fail++;console.error('Failed:',show.title,e);}
@@ -1853,3 +2204,7 @@ window.openBulkTagger = openBulkTagger;
 window.filterBulkList = filterBulkList;
 window.selectAllBulk = selectAllBulk;
 window.applyBulkAction = applyBulkAction;
+window.manualSyncEpisodes = manualSyncEpisodes;
+window.openSpecialsTagger = openSpecialsTagger;
+window.filterSpecialsList = filterSpecialsList;
+window.applySpecialsTags = applySpecialsTags;
