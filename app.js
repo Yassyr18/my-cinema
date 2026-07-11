@@ -388,6 +388,35 @@ async function manualSyncEpisodes(docId) {
     if (btn) { btn.textContent = '⏳ Syncing...'; btn.disabled = true; }
     
     try {
+
+        // Sync all episodes from settings
+async function syncAllEpisodes() {
+    const statusEl = document.getElementById('settings-action-status');
+    const shows = myList.filter(i => i.type === 'tv' && i.tmdb_id);
+    statusEl.innerHTML = `<p style="color:var(--accent);">Syncing ${shows.length} shows...</p>`;
+    let synced = 0, updated = 0;
+
+    for (const show of shows) {
+        try {
+            synced++;
+            statusEl.innerHTML = `<p style="color:var(--accent);">Syncing ${synced}/${shows.length}: ${show.title}...</p>`;
+            
+            // Clear cache for fresh data
+            const cacheKeysToDelete = Object.keys(tmdbCache).filter(k => k.includes(`/tv/${show.tmdb_id}`));
+            cacheKeysToDelete.forEach(k => delete tmdbCache[k]);
+            
+            const changed = await syncShowEpisodes(show);
+            if (changed) updated++;
+            
+            await new Promise(r => setTimeout(r, 500));
+        } catch (e) {
+            console.error('Sync failed for', show.title, e);
+        }
+    }
+
+    statusEl.innerHTML = `<p style="color:var(--green);">✓ Done! ${updated}/${shows.length} shows had new episodes.</p>`;
+    await loadMyList();
+}
         // Clear cache for this show to get fresh data
         const cacheKeysToDelete = Object.keys(tmdbCache).filter(k => k.includes(`/tv/${item.tmdb_id}`));
         cacheKeysToDelete.forEach(k => delete tmdbCache[k]);
@@ -2208,3 +2237,4 @@ window.manualSyncEpisodes = manualSyncEpisodes;
 window.openSpecialsTagger = openSpecialsTagger;
 window.filterSpecialsList = filterSpecialsList;
 window.applySpecialsTags = applySpecialsTags;
+window.syncAllEpisodes = syncAllEpisodes;
