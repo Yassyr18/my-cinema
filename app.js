@@ -18,16 +18,79 @@ const TMDB_API_KEY = '73ae67fa40ec16ffe7a242b6d2a4e1d9';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w500';
 
+// ===== INLINE PLACEHOLDERS — no network requests =====
+const PLACEHOLDER_POSTER  = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='210'%3E%3Crect width='140' height='210' fill='%23222'/%3E%3Ctext x='70' y='112' text-anchor='middle' fill='%23666' font-size='13' font-family='sans-serif'%3ENo Image%3C/text%3E%3C/svg%3E";
+const PLACEHOLDER_THUMB   = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='52' height='78'%3E%3Crect width='52' height='78' fill='%23222'/%3E%3Ctext x='26' y='42' text-anchor='middle' fill='%23666' font-size='10' font-family='sans-serif'%3E?%3C/text%3E%3C/svg%3E";
+const PLACEHOLDER_SMALL   = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='66'%3E%3Crect width='44' height='66' fill='%23222'/%3E%3Ctext x='22' y='36' text-anchor='middle' fill='%23666' font-size='10' font-family='sans-serif'%3E?%3C/text%3E%3C/svg%3E";
+const PLACEHOLDER_AVATAR  = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60'%3E%3Ccircle cx='30' cy='30' r='30' fill='%23222'/%3E%3Ctext x='30' y='34' text-anchor='middle' fill='%23666' font-size='10' font-family='sans-serif'%3E?%3C/text%3E%3C/svg%3E";
+const PLACEHOLDER_SIMILAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='150'%3E%3Crect width='100' height='150' fill='%23222'/%3E%3Ctext x='50' y='78' text-anchor='middle' fill='%23666' font-size='11' font-family='sans-serif'%3E?%3C/text%3E%3C/svg%3E";
+
+function safePoster(url, type) {
+    if (!url || url.includes('placeholder') || url.startsWith('data:')) {
+        if (type === 'thumb')   return PLACEHOLDER_THUMB;
+        if (type === 'small')   return PLACEHOLDER_SMALL;
+        if (type === 'avatar')  return PLACEHOLDER_AVATAR;
+        if (type === 'similar') return PLACEHOLDER_SIMILAR;
+        return PLACEHOLDER_POSTER;
+    }
+    return url;
+}
+
 let myList = [];
 let currentSearchType = 'multi';
-let tmdbCache = {};
 let currentSection = 'anime';
 let isLoading = false;
 let activeDetailTab = 'info-tab';
-let expandedSeasons = new Set(); // Track expanded seasons
+
+// KEY FIX: store season numbers as keys, not label text
+// e.g. "tv_12345_season_3" so they survive count changes
+let expandedSeasons = new Set();
+
+function seasonKey(docId, seasonNum) {
+    return `${docId}_season_${seasonNum}`;
+}
+
+// ===== PERSISTENT TMDB CACHE =====
+let tmdbCache = {};
+
+function loadTmdbCache() {
+    try {
+        const saved = localStorage.getItem('tmdbCache');
+        if (!saved) return;
+        const parsed = JSON.parse(saved);
+        const sixHours = 6 * 60 * 60 * 1000;
+        const now = Date.now();
+        Object.keys(parsed).forEach(key => {
+            if (now - parsed[key].time < sixHours) tmdbCache[key] = parsed[key];
+        });
+    } catch(e) { tmdbCache = {}; }
+}
+
+function saveTmdbCache() {
+    try {
+        const keys = Object.keys(tmdbCache);
+        if (keys.length > 300) {
+            const sorted = keys.sort((a, b) => tmdbCache[b].time - tmdbCache[a].time);
+            const keep = {};
+            sorted.slice(0, 300).forEach(k => keep[k] = tmdbCache[k]);
+            tmdbCache = keep;
+        }
+        localStorage.setItem('tmdbCache', JSON.stringify(tmdbCache));
+    } catch(e) {}
+}
+
+async function tmdbFetch(url) {
+    if (tmdbCache[url] && Date.now() - tmdbCache[url].time < 3600000) return tmdbCache[url].data;
+    const response = await fetch(url);
+    const data = await response.json();
+    tmdbCache[url] = { data, time: Date.now() };
+    if (Object.keys(tmdbCache).length % 15 === 0) saveTmdbCache();
+    return data;
+}
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', async () => {
+    loadTmdbCache();
     setupBottomNav();
     setupSearch();
     setupSubTabSwipe();
@@ -88,12 +151,12 @@ function setupPullToRefresh() {
     });
 }
 
-// ===== REALTIME =====
+// ===== REALTIME — heavier debounce to reduce heat =====
 function setupRealtimeListeners() {
     let debounceTimer;
     const debouncedLoad = () => {
         clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => { if (!isLoading) loadMyList(); }, 2000);
+        debounceTimer = setTimeout(() => { if (!isLoading) loadMyList(); }, 5000);
     };
     onSnapshot(collection(db, 'movies'), debouncedLoad);
     onSnapshot(collection(db, 'series'), debouncedLoad);
@@ -104,13 +167,9 @@ function setupAutoSync() {
     const lastSync = localStorage.getItem('lastEpisodeSync');
     const now = Date.now();
     const twentyFourHours = 24 * 60 * 60 * 1000;
-
     if (!lastSync || now - parseInt(lastSync) > twentyFourHours) {
-        // Delay sync by 5 seconds after load to not block UI
-        setTimeout(() => syncAllAiringShows(true), 5000);
+        setTimeout(() => syncAllAiringShows(true), 8000);
     }
-
-    // Check every hour if 24hrs have passed
     setInterval(() => {
         const last = localStorage.getItem('lastEpisodeSync');
         if (!last || Date.now() - parseInt(last) > twentyFourHours) {
@@ -121,7 +180,6 @@ function setupAutoSync() {
 
 // ===== UPCOMING AUTO REFRESH =====
 function setupUpcomingAutoRefresh() {
-    // When switching to upcoming tab, check if cache is stale (>24hrs)
     document.querySelectorAll('.sub-tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const tabId = btn.dataset.subtab;
@@ -129,21 +187,14 @@ function setupUpcomingAutoRefresh() {
                 const section = tabId.includes('anime') ? 'anime' : 'tv';
                 const cacheKey = `upcomingCache_${section}`;
                 const cacheTime = localStorage.getItem(`${cacheKey}_time`);
-                const now = Date.now();
                 const twentyFourHours = 24 * 60 * 60 * 1000;
-
-                if (!cacheTime || now - parseInt(cacheTime) > twentyFourHours) {
+                if (!cacheTime || Date.now() - parseInt(cacheTime) > twentyFourHours) {
                     loadSectionCalendar(section);
                 } else {
-                    // Load from cache
                     const cached = localStorage.getItem(cacheKey);
                     if (cached) {
-                        try {
-                            const data = JSON.parse(cached);
-                            displayCalendarFromCache(section, data);
-                        } catch(e) {
-                            loadSectionCalendar(section);
-                        }
+                        try { displayCalendarFromCache(section, JSON.parse(cached)); }
+                        catch(e) { loadSectionCalendar(section); }
                     } else {
                         loadSectionCalendar(section);
                     }
@@ -157,25 +208,20 @@ function setupUpcomingAutoRefresh() {
 async function syncAllAiringShows(silent = false) {
     const statusEl = document.getElementById('settings-action-status');
     const shows = myList.filter(i =>
-        i.type === 'tv' &&
-        i.tmdb_id &&
+        i.type === 'tv' && i.tmdb_id &&
         ['Returning Series', 'In Production'].includes(i.tmdb_status)
     );
 
-    if (!silent && statusEl) {
+    if (!silent && statusEl)
         statusEl.innerHTML = `<p style="color:var(--accent);">Syncing ${shows.length} airing shows...</p>`;
-    }
 
     let updated = 0;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
 
     for (let i = 0; i < shows.length; i++) {
         const show = shows[i];
         try {
-            if (!silent && statusEl) {
+            if (!silent && statusEl)
                 statusEl.innerHTML = `<p style="color:var(--accent);">Syncing ${i+1}/${shows.length}: ${show.title}</p>`;
-            }
 
             const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}?api_key=${TMDB_API_KEY}`);
             const newSeasons = [];
@@ -185,11 +231,15 @@ async function syncAllAiringShows(silent = false) {
                     const sd = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}/season/${s}?api_key=${TMDB_API_KEY}`);
                     if (!sd.episodes?.length) continue;
 
-                    // Get existing season data
                     const existingSeason = show.seasons?.find(es => es.number === s);
 
+                    // Build TMDB official episode map for this season
+                    // key = episode_number, value = name
+                    const tmdbEpMap = {};
+                    sd.episodes.forEach(ep => { tmdbEpMap[ep.episode_number] = ep.name; });
+
                     const episodes = sd.episodes.map(ep => {
-                        const existing = existingSeason?.episodes?.find(e => e.number === ep.episode_number);
+                        const existing = findExistingEpisode(existingSeason, ep.episode_number, ep.name, s === 0);
                         return {
                             number: ep.episode_number,
                             name: ep.name || `Episode ${ep.episode_number}`,
@@ -198,32 +248,24 @@ async function syncAllAiringShows(silent = false) {
                             watched_at: existing?.watched_at || null,
                             rewatch_count: existing?.rewatch_count || 0,
                             rewatch_history: existing?.rewatch_history || [],
-                            is_special: existing?.is_special || false
+                            is_special: existing?.is_special || (s === 0)
                         };
                     });
 
-                    // Detect and fix duplicate episode numbers (specials masquerading as regular eps)
-                    const fixed = detectAndFixDuplicateEpisodes(episodes, s);
+                    // Detect imposters using title matching
+                    const fixed = s === 0 ? episodes : detectImposters(episodes, tmdbEpMap, existingSeason);
 
-                    newSeasons.push({
-                        number: s,
-                        is_specials: s === 0,
-                        episodes: fixed
-                    });
+                    newSeasons.push({ number: s, is_specials: s === 0, episodes: fixed });
                 } catch(e) {}
             }
 
             if (newSeasons.length > 0) {
-                // Merge: keep existing watch data, add new episodes
-                const mergedSeasons = mergeSeasonData(show.seasons || [], newSeasons);
-
                 await updateDoc(doc(db, 'series', show.docId), {
-                    seasons: mergedSeasons,
+                    seasons: newSeasons,
                     tmdb_status: det.status || show.tmdb_status,
                     last_synced: new Date().toISOString()
                 });
-
-                show.seasons = mergedSeasons;
+                show.seasons = newSeasons;
                 show.tmdb_status = det.status || show.tmdb_status;
                 updated++;
             }
@@ -235,79 +277,103 @@ async function syncAllAiringShows(silent = false) {
     }
 
     localStorage.setItem('lastEpisodeSync', Date.now().toString());
+    saveTmdbCache();
 
-    if (!silent && statusEl) {
+    if (!silent && statusEl)
         statusEl.innerHTML = `<p style="color:var(--green);">✓ Synced ${updated} shows!</p>`;
-    }
 
-    if (updated > 0) renderAllSections();
+    if (updated > 0) {
+        await loadMyList();
+    }
 }
 
-// ===== DETECT & FIX DUPLICATE EPISODE NUMBERS =====
-// Episodes with duplicate numbers that break sequence are specials
-function detectAndFixDuplicateEpisodes(episodes, seasonNum) {
-    if (seasonNum === 0) return episodes; // Already specials
+// ===== FIND EXISTING EPISODE (title-aware) =====
+// Matches by episode number AND checks title similarity to avoid special conflicts
+function findExistingEpisode(existingSeason, epNumber, tmdbName, isSeasonZero) {
+    if (!existingSeason) return null;
+    const eps = existingSeason.episodes || [];
 
-    const seen = new Map(); // ep number -> first occurrence index
-    const result = [];
+    if (isSeasonZero) {
+        // Season 0: match by number only
+        return eps.find(e => e.number === epNumber) || null;
+    }
 
-    // First pass: find duplicates
-    const numCount = {};
-    episodes.forEach(ep => {
-        numCount[ep.number] = (numCount[ep.number] || 0) + 1;
+    // For regular seasons: prefer exact number + not-special match
+    const regular = eps.find(e => e.number === epNumber && !e.is_special);
+    if (regular) return regular;
+
+    // Fall back to any match
+    return eps.find(e => e.number === epNumber) || null;
+}
+
+// ===== DETECT IMPOSTERS USING TITLE MATCHING =====
+// An imposter is an episode with a duplicate number whose title does NOT match
+// what TMDB says should be at that episode number slot.
+// Strategy:
+//   1. Find all duplicate episode numbers in this season's episode list
+//   2. For each duplicate group, the one whose title matches TMDB's official
+//      episode title for that number is the real one. The others are imposters.
+//   3. Imposters get is_special = true
+function detectImposters(episodes, tmdbEpMap, existingSeason) {
+    // Group episodes by number
+    const byNumber = {};
+    episodes.forEach((ep, idx) => {
+        if (!byNumber[ep.number]) byNumber[ep.number] = [];
+        byNumber[ep.number].push({ ep, idx });
     });
 
-    // Second pass: mark duplicates as specials
-    const seenNums = new Set();
-    episodes.forEach(ep => {
-        if (numCount[ep.number] > 1) {
-            if (seenNums.has(ep.number)) {
-                // This is the duplicate — mark as special
-                result.push({ ...ep, is_special: true, original_number: ep.number });
-            } else {
-                seenNums.add(ep.number);
-                result.push(ep);
+    const result = [...episodes];
+
+    Object.entries(byNumber).forEach(([numStr, group]) => {
+        if (group.length < 2) return; // No duplicate, skip
+
+        const num = parseInt(numStr);
+        const officialTitle = tmdbEpMap[num] || '';
+
+        // Find which one matches the official title best
+        let bestMatch = -1;
+        let bestScore = -1;
+
+        group.forEach(({ ep, idx }) => {
+            const score = titleSimilarity(ep.name || '', officialTitle);
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatch = idx;
             }
-        } else {
-            result.push(ep);
-        }
+        });
+
+        // Mark all others as imposters (specials)
+        group.forEach(({ ep, idx }) => {
+            if (idx !== bestMatch) {
+                // Check if user already manually tagged this
+                const existingEp = existingSeason?.episodes?.find(e =>
+                    e.number === ep.number && e.name === ep.name
+                );
+                result[idx] = {
+                    ...result[idx],
+                    is_special: true,
+                    // Preserve manual tagging
+                    ...(existingEp ? {
+                        is_watched: existingEp.is_watched,
+                        watched_at: existingEp.watched_at,
+                        rewatch_count: existingEp.rewatch_count || 0,
+                        rewatch_history: existingEp.rewatch_history || []
+                    } : {})
+                };
+            }
+        });
     });
 
     return result;
 }
 
-// ===== MERGE SEASON DATA =====
-function mergeSeasonData(existingSeasons, newSeasons) {
-    return newSeasons.map(newSeason => {
-        const existingSeason = existingSeasons.find(s => s.number === newSeason.number);
-        if (!existingSeason) return newSeason;
-
-        const mergedEpisodes = newSeason.episodes.map(newEp => {
-            // Match by number AND name similarity to avoid special conflicts
-            const existingEp = existingSeason.episodes.find(e =>
-                e.number === newEp.number &&
-                !e.is_special &&
-                !newEp.is_special
-            ) || existingSeason.episodes.find(e =>
-                e.number === newEp.number &&
-                e.is_special === newEp.is_special
-            );
-
-            if (existingEp) {
-                return {
-                    ...newEp,
-                    is_watched: existingEp.is_watched || false,
-                    watched_at: existingEp.watched_at || null,
-                    rewatch_count: existingEp.rewatch_count || 0,
-                    rewatch_history: existingEp.rewatch_history || [],
-                    is_special: newEp.is_special || existingEp.is_special || false
-                };
-            }
-            return newEp;
-        });
-
-        return { ...newSeason, episodes: mergedEpisodes };
-    });
+// Simple title similarity: what % of words match
+function titleSimilarity(a, b) {
+    if (!a || !b) return 0;
+    const wa = a.toLowerCase().split(/\s+/);
+    const wb = new Set(b.toLowerCase().split(/\s+/));
+    const matches = wa.filter(w => wb.has(w)).length;
+    return matches / Math.max(wa.length, wb.size);
 }
 
 // ===== BOTTOM NAV =====
@@ -343,7 +409,6 @@ document.querySelectorAll('.sub-tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchSubTab(btn.dataset.subtab));
 });
 
-// ===== SUB TAB SWIPE =====
 function setupSubTabSwipe() {
     document.querySelectorAll('.swipeable-tabs').forEach(container => {
         let startX = 0;
@@ -382,7 +447,9 @@ function setupSearch() {
 
     closeBtn.addEventListener('click', hideSearchOverlay);
     overlayInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') performSearch(); });
-    overlayInput.addEventListener('input', () => { clearBtn.style.display = overlayInput.value ? 'block' : 'none'; });
+    overlayInput.addEventListener('input', () => {
+        clearBtn.style.display = overlayInput.value ? 'block' : 'none';
+    });
 
     clearBtn.addEventListener('click', () => {
         overlayInput.value = '';
@@ -416,7 +483,6 @@ async function performSearch() {
     if (!query) return;
     const container = document.getElementById('search-results');
     container.innerHTML = '<p class="empty-state">Searching...</p>';
-
     try {
         const type = currentSearchType === 'multi' ? 'multi' : currentSearchType;
         const data = await tmdbFetch(`${TMDB_BASE_URL}/search/${type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`);
@@ -438,34 +504,28 @@ function displaySearchResults(results) {
         const year = (item.release_date || item.first_air_date || '').substring(0, 4);
         const type = item.media_type || currentSearchType;
         if (type === 'person') return '';
-        const poster = item.poster_path ? `${TMDB_IMG_BASE}${item.poster_path}` : 'https://via.placeholder.com/140x210?text=No+Image';
+        const poster = item.poster_path ? `${TMDB_IMG_BASE}${item.poster_path}` : PLACEHOLDER_POSTER;
         const rating = item.vote_average ? item.vote_average.toFixed(1) : 'N/A';
         const isInList = myList.some(li => li.tmdb_id === item.id);
         const safeTitle = title.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        const safePosterUrl = poster.replace(/'/g, "\\'");
 
         return `
-            <div class="media-card" onclick="openPreview(${item.id},'${type}','${safeTitle}','${year}','${poster}')">
-                <img src="${poster}" alt="${title}" onerror="this.src='https://via.placeholder.com/140x210?text=No+Image'">
+            <div class="media-card" onclick="openPreview(${item.id},'${type}','${safeTitle}','${year}','${safePosterUrl}')">
+                <img src="${poster}" alt="${title}" onerror="this.src='${PLACEHOLDER_POSTER}'">
                 <div class="info">
                     <h3>${title}</h3>
                     <p class="year">${year} · ⭐${rating}</p>
                 </div>
                 <button class="add-btn ${isInList ? 'in-list-btn' : ''}"
-                    onclick="event.stopPropagation(); ${isInList ? `removeFromListByTMDB(${item.id},'${type}')` : `addToList(${item.id},'${type}','${safeTitle}','${year}','${poster}')`}">
+                    onclick="event.stopPropagation(); ${isInList
+                        ? `removeFromListByTMDB(${item.id},'${type}')`
+                        : `addToList(${item.id},'${type}','${safeTitle}','${year}','${safePosterUrl}')`}">
                     ${isInList ? '✓ In Library' : '+ Add'}
                 </button>
             </div>
         `;
     }).filter(Boolean).join('');
-}
-
-// ===== TMDB CACHE =====
-async function tmdbFetch(url) {
-    if (tmdbCache[url] && Date.now() - tmdbCache[url].time < 3600000) return tmdbCache[url].data;
-    const response = await fetch(url);
-    const data = await response.json();
-    tmdbCache[url] = { data, time: Date.now() };
-    return data;
 }
 
 // ===== LOAD MY LIST =====
@@ -493,7 +553,6 @@ function getAnime() { return myList.filter(i => i.type === 'tv' && i.is_anime); 
 function getTVShows() { return myList.filter(i => i.type === 'tv' && !i.is_anime); }
 function getMovies() { return myList.filter(i => i.type === 'movie'); }
 
-// Only count AIRED episodes in progress (air_date <= today)
 function getAiredEpisodesOnly(seasons) {
     const today = new Date();
     today.setHours(23, 59, 59, 999);
@@ -503,9 +562,7 @@ function getAiredEpisodesOnly(seasons) {
         (s.episodes || []).forEach(ep => {
             if (ep.is_special) return;
             const airDate = ep.air_date ? new Date(ep.air_date) : null;
-            if (!airDate || airDate <= today) {
-                aired.push({ ...ep, seasonNum: s.number });
-            }
+            if (!airDate || airDate <= today) aired.push({ ...ep, seasonNum: s.number });
         });
     });
     return aired;
@@ -514,8 +571,7 @@ function getAiredEpisodesOnly(seasons) {
 function getShowProgressExcludingSpecials(show) {
     const aired = getAiredEpisodesOnly(show.seasons);
     if (!aired.length) return 0;
-    const watched = aired.filter(ep => ep.is_watched).length;
-    return (watched / aired.length) * 100;
+    return (aired.filter(ep => ep.is_watched).length / aired.length) * 100;
 }
 
 function getNextEpisodeExcludingSpecials(show) {
@@ -527,12 +583,11 @@ function getNextEpisodeExcludingSpecials(show) {
         for (const ep of (s.episodes || [])) {
             if (ep.is_special) continue;
             const airDate = ep.air_date ? new Date(ep.air_date) : null;
-            if (airDate && airDate > today) continue; // Skip unaired
+            if (airDate && airDate > today) continue;
             if (!ep.is_watched) return {
                 season: s.number,
                 number: ep.number,
-                name: ep.name || `Episode ${ep.number}`,
-                air_date: ep.air_date || null
+                name: ep.name || `Episode ${ep.number}`
             };
         }
     }
@@ -549,18 +604,15 @@ function getLastWatchedDate(show) {
     return last || show.created_at || '2000-01-01';
 }
 
-// Check if show aired an episode within last 7 days
 function isCurrentlyAiring(show) {
     if (!['Returning Series', 'In Production'].includes(show.tmdb_status)) return false;
-    const today = new Date();
-    const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const oneWeekAhead = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-    // Check if any episode aired in the last 7 days OR is airing within next 7 days
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const oneWeekAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     for (const s of (show.seasons || [])) {
         if (s.number === 0) continue;
         for (const ep of (s.episodes || [])) {
-            if (!ep.air_date) continue;
+            if (!ep.air_date || ep.is_special) continue;
             const airDate = new Date(ep.air_date);
             if (airDate >= sevenDaysAgo && airDate <= oneWeekAhead) return true;
         }
@@ -568,18 +620,15 @@ function isCurrentlyAiring(show) {
     return false;
 }
 
-// Get the most recent aired episode date for sorting
 function getMostRecentAirDate(show) {
     const today = new Date();
     let mostRecent = null;
     (show.seasons || []).forEach(s => {
         if (s.number === 0) return;
         (s.episodes || []).forEach(ep => {
-            if (!ep.air_date) return;
+            if (!ep.air_date || ep.is_special) return;
             const d = new Date(ep.air_date);
-            if (d <= today) {
-                if (!mostRecent || d > mostRecent) mostRecent = d;
-            }
+            if (d <= today && (!mostRecent || d > mostRecent)) mostRecent = d;
         });
     });
     return mostRecent;
@@ -593,13 +642,9 @@ function getAllWatchedEpisodes(shows) {
             s.episodes?.forEach(ep => {
                 if (ep.is_watched && ep.watched_at) {
                     eps.push({
-                        show: show.title,
-                        poster: show.poster,
-                        docId: show.docId,
-                        season: s.number,
-                        episode: ep.number,
-                        name: ep.name,
-                        watched_at: ep.watched_at,
+                        show: show.title, poster: show.poster, docId: show.docId,
+                        season: s.number, episode: ep.number,
+                        name: ep.name, watched_at: ep.watched_at,
                         is_special: ep.is_special || false
                     });
                 }
@@ -622,7 +667,7 @@ function getPreviousUnwatchedEpisodes(show, targetSeason, targetEp) {
             if (ep.is_special) continue;
             if (s.number === targetSeason && ep.number >= targetEp) break;
             const airDate = ep.air_date ? new Date(ep.air_date) : null;
-            if (airDate && airDate > today) continue; // Skip unaired
+            if (airDate && airDate > today) continue;
             if (!ep.is_watched) unwatched.push({ seasonNum: s.number, episodeNum: ep.number });
         }
     }
@@ -640,14 +685,14 @@ function isAnimeShow(details) {
 }
 
 function formatWatchTime(totalMinutes) {
-    const years = Math.floor(totalMinutes / 525600);
+    const years  = Math.floor(totalMinutes / 525600);
     const months = Math.floor((totalMinutes % 525600) / 43800);
-    const days = Math.floor((totalMinutes % 43800) / 1440);
-    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const days   = Math.floor((totalMinutes % 43800) / 1440);
+    const hours  = Math.floor((totalMinutes % 1440) / 60);
     let parts = [];
-    if (years > 0) parts.push(`${years}y`);
+    if (years  > 0) parts.push(`${years}y`);
     if (months > 0) parts.push(`${months}m`);
-    if (days > 0) parts.push(`${days}d`);
+    if (days   > 0) parts.push(`${days}d`);
     parts.push(`${hours}h`);
     return parts.join(' ');
 }
@@ -668,7 +713,9 @@ function autoTagStatusesSilent() {
     myList.forEach(item => {
         if (item.type !== 'tv') return;
         const progress = getShowProgressExcludingSpecials(item);
-        const hasWatched = item.seasons?.some(s => s.number !== 0 && s.episodes?.some(e => e.is_watched && !e.is_special));
+        const hasWatched = item.seasons?.some(s =>
+            s.number !== 0 && s.episodes?.some(e => e.is_watched && !e.is_special)
+        );
         const tmdb = item.tmdb_status || '';
         let newStatus = item.user_status;
 
@@ -695,7 +742,7 @@ function renderAllSections() {
     renderLibrary('movies');
 }
 
-// ===== CONTINUE WATCHING - 4 SECTIONS =====
+// ===== CONTINUE WATCHING — 4 SECTIONS =====
 function renderContinueWatching(sectionType) {
     const isAnime = sectionType === 'anime';
     const container = document.getElementById(`${sectionType}-continue-list`);
@@ -704,19 +751,18 @@ function renderContinueWatching(sectionType) {
     const shows = isAnime ? getAnime() : getTVShows();
     const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
 
-    // Filter base: has progress, NOT dropped, NOT planned, NOT finished/up-to-date
     const inProgress = shows.filter(item => {
         if (!item.seasons?.length) return false;
         if (item.user_status === 'Dropped') return false;
         if (item.user_status === 'Planned') return false;
         let hasWatched = false, hasUnwatched = false;
+        const today = new Date(); today.setHours(23, 59, 59, 999);
         item.seasons.forEach(s => {
             if (s.number === 0) return;
             s.episodes?.forEach(ep => {
                 if (ep.is_special) return;
                 const airDate = ep.air_date ? new Date(ep.air_date) : null;
-                const today = new Date(); today.setHours(23,59,59,999);
-                if (airDate && airDate > today) return; // skip unaired
+                if (airDate && airDate > today) return;
                 if (ep.is_watched) hasWatched = true;
                 else hasUnwatched = true;
             });
@@ -724,81 +770,43 @@ function renderContinueWatching(sectionType) {
         return hasWatched && hasUnwatched;
     });
 
-    // SECTION 1: Currently Airing (aired ep in last 7 days)
-    const currentlyAiring = inProgress.filter(s =>
-        s.user_status !== 'Paused' && isCurrentlyAiring(s)
-    );
-
-    // SECTION 2: Continue Watching (not airing, last watch < 60 days ago)
-    const continueWatching = inProgress.filter(s => {
-        if (s.user_status === 'Paused') return false;
-        if (isCurrentlyAiring(s)) return false;
-        const lastWatch = new Date(getLastWatchedDate(s));
-        return lastWatch >= sixtyDaysAgo;
+    const currentlyAiring    = inProgress.filter(s => s.user_status !== 'Paused' && isCurrentlyAiring(s));
+    const continueWatching   = inProgress.filter(s => {
+        if (s.user_status === 'Paused' || isCurrentlyAiring(s)) return false;
+        return new Date(getLastWatchedDate(s)) >= sixtyDaysAgo;
     });
-
-    // SECTION 3: Haven't Watched in a While (not airing, last watch > 60 days ago)
     const notWatchedInAWhile = inProgress.filter(s => {
-        if (s.user_status === 'Paused') return false;
-        if (isCurrentlyAiring(s)) return false;
-        const lastWatch = new Date(getLastWatchedDate(s));
-        return lastWatch < sixtyDaysAgo;
+        if (s.user_status === 'Paused' || isCurrentlyAiring(s)) return false;
+        return new Date(getLastWatchedDate(s)) < sixtyDaysAgo;
     });
-
-    // SECTION 4: Paused
     const paused = inProgress.filter(s => s.user_status === 'Paused');
 
-    // Sort Section 1: by most recent air date (newest first)
     currentlyAiring.sort((a, b) => {
-        const aDate = getMostRecentAirDate(a);
-        const bDate = getMostRecentAirDate(b);
-        if (!aDate && !bDate) return 0;
-        if (!aDate) return 1;
-        if (!bDate) return -1;
-        return bDate - aDate;
+        const aD = getMostRecentAirDate(a), bD = getMostRecentAirDate(b);
+        return (bD || 0) - (aD || 0);
     });
-
-    // Sort Section 2: by last watched date (most recent first)
-    continueWatching.sort((a, b) =>
-        new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a))
-    );
-
-    // Sort Section 3: by last watched (most recent first)
-    notWatchedInAWhile.sort((a, b) =>
-        new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a))
-    );
-
-    // Sort Section 4: by last watched
-    paused.sort((a, b) =>
-        new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a))
-    );
+    continueWatching.sort((a, b) => new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a)));
+    notWatchedInAWhile.sort((a, b) => new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a)));
+    paused.sort((a, b) => new Date(getLastWatchedDate(b)) - new Date(getLastWatchedDate(a)));
 
     let html = '';
-
     if (currentlyAiring.length) {
         html += `<div class="continue-section-label">📡 Currently Airing</div>`;
         html += currentlyAiring.map(s => createContinueCard(s)).join('');
     }
-
     if (continueWatching.length) {
         html += `<div class="continue-section-label">▶ Continue Watching</div>`;
         html += continueWatching.map(s => createContinueCard(s)).join('');
     }
-
     if (notWatchedInAWhile.length) {
         html += `<div class="continue-section-label">💤 Haven't Watched in a While</div>`;
         html += notWatchedInAWhile.map(s => createContinueCard(s)).join('');
     }
-
     if (paused.length) {
         html += `<div class="continue-section-label">⏸ Paused</div>`;
         html += paused.map(s => createContinueCard(s, true)).join('');
     }
-
-    if (!html) {
-        html = '<p class="empty-state">No shows in progress!</p>';
-    }
-
+    if (!html) html = '<p class="empty-state">No shows in progress!</p>';
     container.innerHTML = html;
 }
 
@@ -806,8 +814,7 @@ function createContinueCard(show, forcefade = false) {
     const nextEp = getNextEpisodeExcludingSpecials(show);
     const progress = getShowProgressExcludingSpecials(show);
     const safeDocId = show.docId.replace(/'/g, "\\'");
-    const poster = show.poster && !show.poster.includes('placeholder')
-        ? show.poster : 'https://via.placeholder.com/52x78?text=?';
+    const poster = safePoster(show.poster, 'thumb');
     const epCode = nextEp
         ? `S${String(nextEp.season).padStart(2,'0')}E${String(nextEp.number).padStart(2,'0')}`
         : 'Up to date';
@@ -815,9 +822,9 @@ function createContinueCard(show, forcefade = false) {
     const airing = isCurrentlyAiring(show);
 
     return `
-       <div class="continue-card ${(isPaused || forcefade) ? 'paused-card' : ''}">
+        <div class="continue-card ${(isPaused || forcefade) ? 'paused-card' : ''}">
             <img src="${poster}" alt="${show.title}"
-                 onerror="this.src='https://via.placeholder.com/52x78?text=?'"
+                 onerror="this.src='${PLACEHOLDER_THUMB}'"
                  onclick="openDetails('${safeDocId}','tv')">
             <div class="continue-info">
                 <h3 onclick="openDetails('${safeDocId}','tv')">${show.title}</h3>
@@ -842,7 +849,6 @@ function createContinueCard(show, forcefade = false) {
 function renderHistory(sectionType) {
     const container = document.getElementById(`${sectionType}-history-list`);
     if (!container) return;
-
     const shows = sectionType === 'anime' ? getAnime() : getTVShows();
     const allEps = getAllWatchedEpisodes(shows);
 
@@ -862,102 +868,88 @@ function renderHistory(sectionType) {
     Object.entries(groups).forEach(([label, eps]) => {
         html += `<div class="history-timeline-label">${label}</div>`;
         html += eps.map(ep => {
-            const poster = ep.poster && !ep.poster.includes('placeholder')
-                ? ep.poster : 'https://via.placeholder.com/44x66?text=?';
+            const poster = safePoster(ep.poster, 'small');
             const safeDocId = ep.docId.replace(/'/g, "\\'");
             const epCode = ep.is_special
-                ? `SE${String(ep.episode).padStart(2,'0')}`
+                ? 'Special'
                 : `S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')}`;
-            const dateStr = new Date(ep.watched_at).toLocaleDateString();
             return `
                 <div class="history-card">
-                    <img src="${poster}" onerror="this.src='https://via.placeholder.com/44x66?text=?'"
+                    <img src="${poster}" onerror="this.src='${PLACEHOLDER_SMALL}'"
                          onclick="openDetails('${safeDocId}','tv')">
                     <div class="history-info">
                         <h4 onclick="openDetails('${safeDocId}','tv')">${ep.show}</h4>
-                        <div class="history-ep">${epCode} - ${ep.name || 'Episode ' + ep.episode}</div>
-                        <div class="history-date">${dateStr}</div>
+                        <div class="history-ep">${epCode} - ${ep.name || 'Episode'}</div>
+                        <div class="history-date">${new Date(ep.watched_at).toLocaleDateString()}</div>
                     </div>
                 </div>
             `;
         }).join('');
     });
-
     container.innerHTML = html;
 }
 
 // ===== MOVIES =====
 function renderMoviesSection() {
     const movies = getMovies();
-    const watchedEl = document.getElementById('movies-watched-list');
+    const watchedEl   = document.getElementById('movies-watched-list');
     const unwatchedEl = document.getElementById('movies-unwatched-list');
-
-    const watched = movies.filter(m => m.is_watched);
+    const watched   = movies.filter(m => m.is_watched);
     const unwatched = movies.filter(m => !m.is_watched);
 
-    if (watchedEl) watchedEl.innerHTML = watched.length
-        ? watched.map(m => createMediaCard(m)).join('')
-        : '<p class="empty-state">No watched movies.</p>';
-    if (unwatchedEl) unwatchedEl.innerHTML = unwatched.length
-        ? unwatched.map(m => createMediaCard(m)).join('')
-        : '<p class="empty-state">No unwatched movies.</p>';
+    if (watchedEl)   watchedEl.innerHTML   = watched.length   ? watched.map(m => createMediaCard(m)).join('')   : '<p class="empty-state">No watched movies.</p>';
+    if (unwatchedEl) unwatchedEl.innerHTML = unwatched.length ? unwatched.map(m => createMediaCard(m)).join('') : '<p class="empty-state">No unwatched movies.</p>';
 }
 
 // ===== LIBRARY =====
 function renderLibrary(section) {
     let items, gridId, sortId, filterId;
-    if (section === 'anime') { items = getAnime(); gridId = 'anime-library-grid'; sortId = 'anime-sort'; filterId = 'anime-filter'; }
-    else if (section === 'tv') { items = getTVShows(); gridId = 'tv-library-grid'; sortId = 'tv-sort'; filterId = 'tv-filter'; }
-    else { items = getMovies(); gridId = 'movies-library-grid'; sortId = 'movies-sort'; filterId = 'movies-filter'; }
+    if (section === 'anime')       { items = getAnime();    gridId = 'anime-library-grid';  sortId = 'anime-sort';   filterId = 'anime-filter'; }
+    else if (section === 'tv')     { items = getTVShows();  gridId = 'tv-library-grid';     sortId = 'tv-sort';      filterId = 'tv-filter'; }
+    else                           { items = getMovies();   gridId = 'movies-library-grid'; sortId = 'movies-sort';  filterId = 'movies-filter'; }
 
     const grid = document.getElementById(gridId);
     if (!grid) return;
-
-    const sort = document.getElementById(sortId)?.value || 'title';
+    const sort   = document.getElementById(sortId)?.value   || 'title';
     const filter = document.getElementById(filterId)?.value || 'all';
 
     let filtered = [...items];
     if (filter !== 'all') {
-        if (filter === 'watched') filtered = items.filter(i => i.is_watched);
+        if (filter === 'watched')   filtered = items.filter(i => i.is_watched);
         else if (filter === 'unwatched') filtered = items.filter(i => !i.is_watched);
         else if (filter === 'favorites') filtered = items.filter(i => i.is_favorite);
         else filtered = items.filter(i => i.user_status === filter);
     }
 
-    if (sort === 'title') filtered.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-    else if (sort === 'rating') filtered.sort((a, b) => (b.tmdb_rating || 0) - (a.tmdb_rating || 0));
-    else if (sort === 'recent') filtered.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    if (sort === 'title')    filtered.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    else if (sort === 'rating')   filtered.sort((a, b) => (b.tmdb_rating || 0) - (a.tmdb_rating || 0));
+    else if (sort === 'recent')   filtered.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
     else if (sort === 'progress') filtered.sort((a, b) => getShowProgressExcludingSpecials(b) - getShowProgressExcludingSpecials(a));
-    else if (sort === 'year') filtered.sort((a, b) => (b.year || 0) - (a.year || 0));
+    else if (sort === 'year')     filtered.sort((a, b) => (b.year || 0) - (a.year || 0));
 
     grid.innerHTML = filtered.length
         ? filtered.map(item => createMediaCard(item)).join('')
         : '<p class="empty-state">No items found.</p>';
 }
 
-// ===== CREATE MEDIA CARD =====
 function createMediaCard(item) {
-    const poster = item.poster && !item.poster.includes('placeholder')
-        ? item.poster : `https://via.placeholder.com/140x210?text=${encodeURIComponent(item.title || '?')}`;
-
+    const poster = safePoster(item.poster);
     let statusLine = '';
     if (item.type === 'tv' && item.user_status) {
         const prog = getShowProgressExcludingSpecials(item);
-        const map = { 'Watching': 'watching', 'Up to Date': 'uptodate', 'Finished': 'finished', 'Dropped': 'dropped', 'Paused': 'paused' };
+        const map = { 'Watching':'watching','Up to Date':'uptodate','Finished':'finished','Dropped':'dropped','Paused':'paused' };
         const cls = map[item.user_status] || '';
         if (cls) {
-            const w = (item.user_status === 'Watching' || item.user_status === 'Dropped') ? `${prog}%` : '100%';
+            const w = ['Watching','Dropped'].includes(item.user_status) ? `${prog}%` : '100%';
             statusLine = `<div class="status-line status-${cls}" style="width:${w};"></div>`;
         }
     }
-
     const rating = item.tmdb_rating ? `⭐${item.tmdb_rating.toFixed(1)}` : '';
     const safeDocId = item.docId.replace(/'/g, "\\'");
-
     return `
         <div class="media-card" onclick="openDetails('${safeDocId}','${item.type}')">
             ${item.is_favorite ? '<div class="favorite-badge">⭐</div>' : ''}
-            <img src="${poster}" alt="${item.title}" onerror="this.src='https://via.placeholder.com/140x210?text=No+Image'">
+            <img src="${poster}" alt="${item.title}" onerror="this.src='${PLACEHOLDER_POSTER}'">
             ${statusLine}
             <div class="info">
                 <h3>${item.title || 'Unknown'}</h3>
@@ -969,8 +961,8 @@ function createMediaCard(item) {
 
 // ===== PROFILE =====
 function updateProfilePage() {
-    const anime = getAnime();
-    const tv = getTVShows();
+    const anime  = getAnime();
+    const tv     = getTVShows();
     const movies = getMovies();
 
     function countEps(list) {
@@ -982,14 +974,14 @@ function updateProfilePage() {
         return t;
     }
 
-    const animeEps = countEps(anime);
-    const tvEps = countEps(tv);
-    const moviesWatched = movies.filter(m => m.is_watched).length;
-    const animeFinished = anime.filter(a => ['Finished','Up to Date'].includes(a.user_status)).length;
-    const tvFinished = tv.filter(t => ['Finished','Up to Date'].includes(t.user_status)).length;
+    const animeEps       = countEps(anime);
+    const tvEps          = countEps(tv);
+    const moviesWatched  = movies.filter(m => m.is_watched).length;
+    const animeFinished  = anime.filter(a => ['Finished','Up to Date'].includes(a.user_status)).length;
+    const tvFinished     = tv.filter(t => ['Finished','Up to Date'].includes(t.user_status)).length;
     const moviesRewatched = movies.reduce((s, m) => s + (m.rewatch_count || 0), 0);
 
-    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    const setEl  = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
     const setBar = (id, pct) => { const el = document.getElementById(id); if (el) el.style.width = `${pct}%`; };
 
     setEl('p-anime-watched', animeFinished);
@@ -1014,15 +1006,15 @@ function updateProfilePage() {
         const el = document.getElementById(elId);
         if (!el) return;
         const recent = [...list].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).slice(0, 6);
-        el.innerHTML = recent.map(item => `
-            <img src="${item.poster && !item.poster.includes('placeholder') ? item.poster : 'https://via.placeholder.com/50x75?text=?'}"
-                 onerror="this.src='https://via.placeholder.com/50x75?text=?'"
-                 onclick="openDetails('${item.docId.replace(/'/g,"\\'")}','${item.type}')">
-        `).join('');
+        el.innerHTML = recent.map(item => {
+            const p  = safePoster(item.poster, 'thumb');
+            const sd = item.docId.replace(/'/g, "\\'");
+            return `<img src="${p}" onerror="this.src='${PLACEHOLDER_THUMB}'" onclick="openDetails('${sd}','${item.type}')">`;
+        }).join('');
     }
 
-    recentPosters(anime, 'p-anime-posters');
-    recentPosters(tv, 'p-tv-posters');
+    recentPosters(anime,  'p-anime-posters');
+    recentPosters(tv,     'p-tv-posters');
     recentPosters(movies, 'p-movies-posters');
 }
 
@@ -1030,7 +1022,7 @@ function updateProfilePage() {
 async function quickMarkWatched(docId, seasonNum, episodeNum) {
     const item = myList.find(i => i.docId === docId);
     if (!item) return;
-    const season = item.seasons.find(s => s.number === seasonNum);
+    const season  = item.seasons.find(s => s.number === seasonNum);
     if (!season) return;
     const episode = season.episodes.find(e => e.number === episodeNum && !e.is_special);
     if (!episode) return;
@@ -1050,8 +1042,6 @@ async function quickMarkWatched(docId, seasonNum, episodeNum) {
 
     try {
         await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
-        const local = myList.find(i => i.docId === docId);
-        if (local) local.seasons = item.seasons;
         const section = item.is_anime ? 'anime' : 'tv';
         renderContinueWatching(section);
         renderHistory(section);
@@ -1064,15 +1054,13 @@ function showConfirm(title, message, yesText = 'Yes', noText = 'No', showCancel 
         const dialog = document.getElementById('confirm-dialog');
         document.getElementById('confirm-title').textContent = title;
         document.getElementById('confirm-message').textContent = message;
-        const yesBtn = document.getElementById('confirm-yes');
-        const noBtn = document.getElementById('confirm-no');
+        const yesBtn    = document.getElementById('confirm-yes');
+        const noBtn     = document.getElementById('confirm-no');
         const cancelBtn = document.getElementById('confirm-cancel');
-        yesBtn.textContent = yesText;
-        noBtn.textContent = noText;
+        yesBtn.textContent    = yesText;
+        noBtn.textContent     = noText;
         cancelBtn.style.display = showCancel ? 'inline-block' : 'none';
-        dialog.style.display = 'flex';
-        dialog.style.alignItems = 'center';
-        dialog.style.justifyContent = 'center';
+        dialog.style.cssText = 'display:flex;align-items:center;justify-content:center;';
 
         const cleanup = () => {
             dialog.style.display = 'none';
@@ -1080,17 +1068,16 @@ function showConfirm(title, message, yesText = 'Yes', noText = 'No', showCancel 
             noBtn.replaceWith(noBtn.cloneNode(true));
             cancelBtn.replaceWith(cancelBtn.cloneNode(true));
         };
-        document.getElementById('confirm-yes').addEventListener('click', () => { cleanup(); resolve('yes'); });
-        document.getElementById('confirm-no').addEventListener('click', () => { cleanup(); resolve('no'); });
+        document.getElementById('confirm-yes').addEventListener('click',    () => { cleanup(); resolve('yes'); });
+        document.getElementById('confirm-no').addEventListener('click',     () => { cleanup(); resolve('no'); });
         document.getElementById('confirm-cancel').addEventListener('click', () => { cleanup(); resolve('cancel'); });
     });
 }
-
 // ===== PREVIEW =====
 async function openPreview(tmdbId, type, title, year, poster) {
     hideSearchOverlay();
     const modal = document.getElementById('preview-modal');
-    const body = document.getElementById('preview-modal-body');
+    const body  = document.getElementById('preview-modal-body');
     body.innerHTML = '<p class="empty-state">Loading...</p>';
     modal.style.display = 'block';
 
@@ -1112,22 +1099,26 @@ async function openPreview(tmdbId, type, title, year, poster) {
             tmdbFetch(`${TMDB_BASE_URL}/${ep}/${tmdbId}/similar?api_key=${TMDB_API_KEY}`),
             tmdbFetch(`${TMDB_BASE_URL}/${ep}/${tmdbId}/watch/providers?api_key=${TMDB_API_KEY}`)
         ]);
-    } catch (e) {}
+    } catch(e) {}
 
-    const synopsis = details?.overview || 'No synopsis.';
-    const rating = details?.vote_average;
-    const genres = details?.genres || [];
-    const cast = credits?.cast?.slice(0, 12) || [];
+    const synopsis     = details?.overview || 'No synopsis.';
+    const rating       = details?.vote_average;
+    const genres       = details?.genres || [];
+    const cast         = credits?.cast?.slice(0, 12) || [];
     const similarItems = similar?.results?.slice(0, 10) || [];
     const providerList = providers?.results?.US?.flatrate || [];
-    const networks = details?.networks || [];
-    const tmdbStatus = details?.status || '';
-    const statusColor = { 'Returning Series': '#4CAF50', 'In Production': '#2196F3', 'Ended': '#666', 'Canceled': '#f44336', 'Released': '#4CAF50' }[tmdbStatus] || '#666';
-    const runtime = type === 'movie' && details?.runtime ? `${Math.floor(details.runtime/60)}h ${details.runtime%60}m` : null;
+    const networks     = details?.networks || [];
+    const tmdbStatus   = details?.status || '';
+    const statusColor  = {
+        'Returning Series':'#4CAF50','In Production':'#2196F3',
+        'Ended':'#666','Canceled':'#f44336','Released':'#4CAF50'
+    }[tmdbStatus] || '#666';
+    const runtime = type === 'movie' && details?.runtime
+        ? `${Math.floor(details.runtime/60)}h ${details.runtime%60}m` : null;
 
-    let episodesPreviewHTML = '';
+    let contentHTML = '';
     if (type === 'tv' && details?.number_of_seasons) {
-        episodesPreviewHTML = `
+        contentHTML = `
             <div class="detail-tabs" style="margin-top:20px;">
                 <button class="detail-tab-btn active" onclick="switchDetailTab('preview-info-tab')">Info</button>
                 <button class="detail-tab-btn" onclick="switchDetailTab('preview-episodes-tab')">Episodes</button>
@@ -1140,25 +1131,24 @@ async function openPreview(tmdbId, type, title, year, poster) {
             </div>
             <div class="detail-tab-content" id="preview-episodes-tab">
                 <p style="color:var(--text2);text-align:center;padding:20px;">
-                    <strong>Add to Library</strong> to track episodes and mark them as watched.
+                    <strong>Add to Library</strong> to track episodes.
                 </p>
                 <p style="color:var(--text3);text-align:center;font-size:13px;">
                     ${details.number_of_seasons} Season(s) · ${details.number_of_episodes || '?'} Episodes
                 </p>
-            </div>
-        `;
+            </div>`;
     } else {
-        episodesPreviewHTML = `
+        contentHTML = `
             <div class="synopsis"><h3>Synopsis</h3><p>${synopsis}</p></div>
             ${buildCastSection(cast)}
             ${buildNetworksSection(providerList, networks)}
-            ${buildSimilarSection(similarItems, type)}
-        `;
+            ${buildSimilarSection(similarItems, type)}`;
     }
 
+    const safePosterUrl = poster.replace(/'/g, "\\'");
     body.innerHTML = `
         <div class="detail-header">
-            <img src="${poster}" onerror="this.src='https://via.placeholder.com/140x210?text=No+Image'">
+            <img src="${poster}" onerror="this.src='${PLACEHOLDER_POSTER}'">
             <div class="detail-header-info">
                 <h2><span>${title} ${year ? `(${year})` : ''}</span></h2>
                 ${tmdbStatus ? `<span class="status-badge" style="background:${statusColor};">${tmdbStatus}</span>` : ''}
@@ -1166,14 +1156,14 @@ async function openPreview(tmdbId, type, title, year, poster) {
                 ${runtime ? `<p style="color:var(--text2);font-size:13px;">⏱ ${runtime}</p>` : ''}
                 <div class="genre-tags">${genres.map(g => `<span class="genre-tag">${g.name}</span>`).join('')}</div>
                 <div style="margin-top:12px;">
-                    <button onclick="handlePreviewAdd(${tmdbId},'${type}','${safeTitle}','${year}','${poster}')"
+                    <button onclick="handlePreviewAdd(${tmdbId},'${type}','${safeTitle}','${year}','${safePosterUrl}')"
                             class="watch-btn mark-watched" style="padding:10px 20px;">
                         + Add to Library
                     </button>
                 </div>
             </div>
         </div>
-        ${episodesPreviewHTML}
+        ${contentHTML}
     `;
 }
 
@@ -1189,12 +1179,10 @@ async function openDetails(docId, type, forceTab) {
     const item = myList.find(i => i.docId === docId);
     if (!item) return;
     const modal = document.getElementById('modal');
-    const body = document.getElementById('modal-body');
+    const body  = document.getElementById('modal-body');
     body.innerHTML = '<p class="empty-state">Loading...</p>';
     modal.style.display = 'block';
-
     if (forceTab) activeDetailTab = forceTab;
-
     if (type === 'movie') await openMovieDetails(item, body, docId.replace(/'/g, "\\'"));
     else await openTVDetails(item, body, docId.replace(/'/g, "\\'"));
 }
@@ -1210,21 +1198,21 @@ async function openMovieDetails(item, body, safeDocId) {
                 tmdbFetch(`${TMDB_BASE_URL}/movie/${item.tmdb_id}/similar?api_key=${TMDB_API_KEY}`),
                 tmdbFetch(`${TMDB_BASE_URL}/movie/${item.tmdb_id}/watch/providers?api_key=${TMDB_API_KEY}`)
             ]);
-        } catch (e) {}
+        } catch(e) {}
     }
 
-    const synopsis = details?.overview || 'No synopsis.';
-    const rating = details?.vote_average || item.tmdb_rating;
-    const genres = details?.genres || [];
-    const runtime = details?.runtime ? `${Math.floor(details.runtime/60)}h ${details.runtime%60}m` : 'N/A';
-    const cast = credits?.cast?.slice(0, 15) || [];
-    const director = credits?.crew?.find(c => c.job === 'Director');
+    const synopsis     = details?.overview || 'No synopsis.';
+    const rating       = details?.vote_average || item.tmdb_rating;
+    const genres       = details?.genres || [];
+    const runtime      = details?.runtime ? `${Math.floor(details.runtime/60)}h ${details.runtime%60}m` : 'N/A';
+    const cast         = credits?.cast?.slice(0, 15) || [];
+    const director     = credits?.crew?.find(c => c.job === 'Director');
     const similarItems = similar?.results?.slice(0, 10) || [];
     const providerList = providers?.results?.US?.flatrate || [];
 
     body.innerHTML = `
         <div class="detail-header">
-            <img src="${item.poster}" onerror="this.src='https://via.placeholder.com/140x210?text=No+Image'">
+            <img src="${safePoster(item.poster)}" onerror="this.src='${PLACEHOLDER_POSTER}'">
             <div class="detail-header-info">
                 <h2>
                     <span>${item.title} ${item.year ? `(${item.year})` : ''}</span>
@@ -1241,7 +1229,8 @@ async function openMovieDetails(item, body, safeDocId) {
                 <p style="color:var(--text2);font-size:13px;">⏱ ${runtime}</p>
                 <div class="genre-tags">${genres.map(g => `<span class="genre-tag">${g.name}</span>`).join('')}</div>
                 <div style="margin-top:12px;">
-                    <button onclick="toggleWatched('${safeDocId}','movie')" class="watch-btn ${item.is_watched ? 'watched' : 'mark-watched'}">
+                    <button onclick="toggleWatched('${safeDocId}','movie')"
+                            class="watch-btn ${item.is_watched ? 'watched' : 'mark-watched'}">
                         ${item.is_watched ? '✓ Watched' : '○ Mark Watched'}
                     </button>
                 </div>
@@ -1267,37 +1256,34 @@ async function openTVDetails(item, body, safeDocId) {
                 tmdbFetch(`${TMDB_BASE_URL}/tv/${item.tmdb_id}/similar?api_key=${TMDB_API_KEY}`),
                 tmdbFetch(`${TMDB_BASE_URL}/tv/${item.tmdb_id}/watch/providers?api_key=${TMDB_API_KEY}`)
             ]);
-        } catch (e) {}
+        } catch(e) {}
     }
 
-    const synopsis = details?.overview || 'No synopsis.';
-    const rating = details?.vote_average || item.tmdb_rating;
-    const genres = details?.genres || [];
-    const cast = credits?.cast?.slice(0, 15) || [];
+    const synopsis     = details?.overview || 'No synopsis.';
+    const rating       = details?.vote_average || item.tmdb_rating;
+    const genres       = details?.genres || [];
+    const cast         = credits?.cast?.slice(0, 15) || [];
     const similarItems = similar?.results?.slice(0, 10) || [];
     const providerList = providers?.results?.US?.flatrate || [];
-    const networks = details?.networks || [];
-    const tmdbStatus = details?.status || item.tmdb_status || 'Unknown';
-    const statusColor = {
-        'Returning Series': '#4CAF50',
-        'In Production': '#2196F3',
-        'Ended': '#666',
-        'Canceled': '#f44336'
+    const networks     = details?.networks || [];
+    const tmdbStatus   = details?.status || item.tmdb_status || 'Unknown';
+    const statusColor  = {
+        'Returning Series':'#4CAF50','In Production':'#2196F3',
+        'Ended':'#666','Canceled':'#f44336'
     }[tmdbStatus] || '#666';
 
-    // Count only AIRED episodes for progress
-    const airedEps = getAiredEpisodesOnly(item.seasons);
+    const airedEps   = getAiredEpisodesOnly(item.seasons);
     const watchedCount = airedEps.filter(e => e.is_watched).length;
-    const totalCount = airedEps.length;
-    const progress = totalCount > 0 ? (watchedCount / totalCount) * 100 : 0;
+    const totalCount   = airedEps.length;
+    const progress     = totalCount > 0 ? (watchedCount / totalCount) * 100 : 0;
 
     let episodeRatings = [];
     if (item.tmdb_id) episodeRatings = await fetchEpisodeRatings(item.tmdb_id, item.seasons || []);
 
     const regularSeasons = (item.seasons || []).filter(s => s.number !== 0);
-    const specialsSeason = (item.seasons || []).find(s => s.number === 0);
+    const season0        = (item.seasons || []).find(s => s.number === 0);
 
-    // Also gather is_special episodes from regular seasons into specials group
+    // Collect inline specials from regular seasons
     const inlineSpecials = [];
     regularSeasons.forEach(s => {
         s.episodes?.forEach(ep => {
@@ -1305,22 +1291,17 @@ async function openTVDetails(item, body, safeDocId) {
         });
     });
 
-    const seasonsHTML = regularSeasons.map(s => buildSeasonHTML(s, safeDocId)).join('');
-
-    // Combine Season 0 specials with inline specials
-    const allSpecialEps = [
-        ...(specialsSeason?.episodes || []),
-        ...inlineSpecials
-    ];
+    const allSpecialEps = [...(season0?.episodes || []), ...inlineSpecials];
+    const seasonsHTML   = regularSeasons.map(s => buildSeasonHTML(s, safeDocId, item.docId)).join('');
 
     const specialsHTML = allSpecialEps.length ? `
         <div class="season specials">
-            <div class="season-header" onclick="toggleSeason(this)">
+            <div class="season-header" onclick="toggleSeason(this,'${item.docId}',0)">
                 <span>Specials (${allSpecialEps.filter(e=>e.is_watched).length}/${allSpecialEps.length})</span>
-                <span class="toggle-icon">▼</span>
+                <span class="toggle-icon ${expandedSeasons.has(seasonKey(item.docId,0)) ? 'open' : ''}">▼</span>
             </div>
-            <div class="season-body">
-                ${allSpecialEps.map(ep => buildSpecialEpisodeHTML(ep, safeDocId)).join('')}
+            <div class="season-body ${expandedSeasons.has(seasonKey(item.docId,0)) ? 'open' : ''}">
+                ${allSpecialEps.map(ep => buildSpecialEpisodeHTML(ep, safeDocId, item.docId)).join('')}
             </div>
         </div>` : '';
 
@@ -1328,7 +1309,7 @@ async function openTVDetails(item, body, safeDocId) {
 
     body.innerHTML = `
         <div class="detail-header">
-            <img src="${item.poster}" onerror="this.src='https://via.placeholder.com/140x210?text=No+Image'">
+            <img src="${safePoster(item.poster)}" onerror="this.src='${PLACEHOLDER_POSTER}'">
             <div class="detail-header-info">
                 <h2>
                     <span>${item.title}</span>
@@ -1358,190 +1339,76 @@ async function openTVDetails(item, body, safeDocId) {
                 <div class="detail-progress">
                     <div class="detail-progress-label">${watchedCount}/${totalCount} aired (${progress.toFixed(0)}%)</div>
                     <div class="detail-progress-bar">
-                        <div class="detail-progress-fill" style="width:${progress}%;background:${progress >= 100 ? '#4CAF50' : '#FFC107'};"></div>
+                        <div class="detail-progress-fill"
+                             style="width:${progress}%;background:${progress>=100?'#4CAF50':'#FFC107'};"></div>
                     </div>
                 </div>
             </div>
         </div>
         <div class="detail-tabs">
-            <button class="detail-tab-btn ${infoActive ? 'active' : ''}" onclick="switchDetailTab('info-tab')">Info</button>
-            <button class="detail-tab-btn ${!infoActive ? 'active' : ''}" onclick="switchDetailTab('episodes-tab')">Episodes</button>
+            <button class="detail-tab-btn ${infoActive ? 'active':''}" onclick="switchDetailTab('info-tab')">Info</button>
+            <button class="detail-tab-btn ${!infoActive ? 'active':''}" onclick="switchDetailTab('episodes-tab')">Episodes</button>
         </div>
         <div class="swipe-container" id="detail-swipe">
-            <div class="detail-tab-content ${infoActive ? 'active' : ''}" id="info-tab">
+            <div class="detail-tab-content ${infoActive?'active':''}" id="info-tab">
                 <div class="synopsis"><h3>Synopsis</h3><p>${synopsis}</p></div>
                 ${buildEpisodeRatingsChart(episodeRatings)}
                 ${buildCastSection(cast)}
                 ${buildNetworksSection(providerList, networks)}
                 ${buildSimilarSection(similarItems, 'tv')}
             </div>
-            <div class="detail-tab-content ${!infoActive ? 'active' : ''}" id="episodes-tab">
+            <div class="detail-tab-content ${!infoActive?'active':''}" id="episodes-tab">
                 ${seasonsHTML}
                 ${specialsHTML}
             </div>
         </div>
     `;
 
-    // Restore expanded seasons
-    restoreExpandedSeasons();
     setupDetailSwipe();
     if (episodeRatings.length) renderEpisodeRatingsChart(episodeRatings);
 }
 
-// ===== TAG SPECIALS MODAL =====
-function openTagSpecialsModal(docId) {
-    const item = myList.find(i => i.docId === docId);
-    if (!item) return;
-
-    // Close options menu
-    document.querySelectorAll('.options-menu').forEach(m => m.classList.remove('show'));
-
-    // Use confirm dialog as base but we need a custom modal
-    // Create a dedicated special tagger modal with high z-index
-    let existingModal = document.getElementById('tag-specials-modal');
-    if (!existingModal) {
-        existingModal = document.createElement('div');
-        existingModal.id = 'tag-specials-modal';
-        existingModal.className = 'modal';
-        existingModal.style.cssText = 'z-index: 3000;';
-        existingModal.innerHTML = `
-            <div class="modal-content" style="max-width:600px;">
-                <span class="close" onclick="document.getElementById('tag-specials-modal').style.display='none'">&times;</span>
-                <div id="tag-specials-body"></div>
-            </div>
-        `;
-        document.body.appendChild(existingModal);
-    }
-
-    const body = document.getElementById('tag-specials-body');
-    const allEps = [];
-
-    item.seasons?.forEach(s => {
-        s.episodes?.forEach(ep => {
-            allEps.push({
-                seasonNum: s.number,
-                epNum: ep.number,
-                name: ep.name,
-                is_special: ep.is_special || s.number === 0,
-                air_date: ep.air_date
-            });
-        });
-    });
-
-    body.innerHTML = `
-        <h3 style="color:var(--accent);margin-bottom:15px;">🎭 Tag Episodes as Special</h3>
-        <p style="color:var(--text2);font-size:13px;margin-bottom:15px;">
-            Check episodes that should be tagged as specials/OVAs. They will be moved to the Specials group.
-        </p>
-        <div style="max-height:400px;overflow-y:auto;">
-            ${allEps.map((ep, idx) => {
-                const label = ep.seasonNum === 0
-                    ? `S00 · ${ep.name}`
-                    : `S${String(ep.seasonNum).padStart(2,'0')}E${String(ep.epNum).padStart(2,'0')} · ${ep.name}`;
-                return `
-                    <div style="display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--border);">
-                        <input type="checkbox" id="sp_${idx}"
-                               ${ep.is_special ? 'checked' : ''}
-                               data-season="${ep.seasonNum}" data-ep="${ep.epNum}">
-                        <label for="sp_${idx}" style="font-size:13px;color:var(--text);cursor:pointer;flex:1;">
-                            ${label}
-                            ${ep.is_special ? '<span style="background:#FF6B35;color:white;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:6px;">SPECIAL</span>' : ''}
-                        </label>
-                    </div>
-                `;
-            }).join('')}
-        </div>
-        <div style="margin-top:15px;display:flex;gap:10px;justify-content:flex-end;">
-            <button onclick="document.getElementById('tag-specials-modal').style.display='none'"
-                    style="padding:10px 20px;border:2px solid var(--border);background:var(--surface);color:var(--text);border-radius:8px;cursor:pointer;">
-                Cancel
-            </button>
-            <button onclick="applySpecialTags('${docId}')"
-                    style="padding:10px 20px;background:var(--accent);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">
-                Save
-            </button>
-        </div>
-    `;
-
-    existingModal.style.display = 'block';
-}
-
-async function applySpecialTags(docId) {
-    const item = myList.find(i => i.docId === docId);
-    if (!item) return;
-
-    const checkboxes = document.querySelectorAll('#tag-specials-body input[type="checkbox"]');
-    checkboxes.forEach(cb => {
-        const seasonNum = parseInt(cb.dataset.season);
-        const epNum = parseInt(cb.dataset.ep);
-        const season = item.seasons.find(s => s.number === seasonNum);
-        const ep = season?.episodes.find(e => e.number === epNum);
-        if (ep) ep.is_special = cb.checked;
-    });
-
-    try {
-        await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
-        document.getElementById('tag-specials-modal').style.display = 'none';
-        await loadMyList();
-        openDetails(docId, 'tv', activeDetailTab);
-    } catch(e) { console.error(e); }
-}
-
-// ===== EXPANDED SEASONS TRACKING =====
-function restoreExpandedSeasons() {
-    document.querySelectorAll('.season-header').forEach(header => {
-        const body = header.nextElementSibling;
-        const icon = header.querySelector('.toggle-icon');
-        const seasonLabel = header.querySelector('span')?.textContent?.trim();
-        if (expandedSeasons.has(seasonLabel)) {
-            body.classList.add('open');
-            icon.classList.add('open');
-        }
-    });
-}
-
-function toggleSeason(header) {
+// ===== SEASON TOGGLE — uses docId + seasonNum as key =====
+function toggleSeason(header, docId, seasonNum) {
     const body = header.nextElementSibling;
     const icon = header.querySelector('.toggle-icon');
-    const seasonLabel = header.querySelector('span')?.textContent?.trim();
+    const key  = seasonKey(docId, seasonNum);
 
     body.classList.toggle('open');
     icon.classList.toggle('open');
 
-    if (body.classList.contains('open')) {
-        expandedSeasons.add(seasonLabel);
-    } else {
-        expandedSeasons.delete(seasonLabel);
-    }
+    if (body.classList.contains('open')) expandedSeasons.add(key);
+    else expandedSeasons.delete(key);
 }
 
 // ===== BUILD SEASON HTML =====
-function buildSeasonHTML(season, safeDocId) {
-    // Filter out is_special episodes from regular season display
+function buildSeasonHTML(season, safeDocId, docId) {
     const regularEps = (season.episodes || []).filter(ep => !ep.is_special);
     const today = new Date(); today.setHours(23,59,59,999);
-    const airedEps = regularEps.filter(ep => !ep.air_date || new Date(ep.air_date) <= today);
-
-    const watched = airedEps.filter(e => e.is_watched).length;
-    const total = airedEps.length;
+    const airedEps   = regularEps.filter(ep => !ep.air_date || new Date(ep.air_date) <= today);
+    const watched    = airedEps.filter(e => e.is_watched).length;
+    const total      = airedEps.length;
     const allWatched = watched === total && total > 0;
-    const seasonLabel = `Season ${season.number}`;
-    const isExpanded = expandedSeasons.has(seasonLabel);
+    const key        = seasonKey(docId, season.number);
+    const isExpanded = expandedSeasons.has(key);
 
     return `
         <div class="season">
-            <div class="season-header" onclick="toggleSeason(this)">
-                <span>${seasonLabel} <span style="font-size:12px;opacity:0.8;">(${watched}/${total} aired)</span></span>
+            <div class="season-header" onclick="toggleSeason(this,'${docId}',${season.number})">
+                <span>Season ${season.number}
+                    <span style="font-size:12px;opacity:0.8;">(${watched}/${total} aired)</span>
+                </span>
                 <div style="display:flex;gap:8px;align-items:center;">
-                    <button class="mark-all-btn" onclick="event.stopPropagation();markSeasonWatched('${safeDocId}',${season.number})">
+                    <button class="mark-all-btn"
+                            onclick="event.stopPropagation();markSeasonWatched('${safeDocId}',${season.number})">
                         ${allWatched ? 'Unmark' : 'Mark All'}
                     </button>
                     <span class="toggle-icon ${isExpanded ? 'open' : ''}">▼</span>
                 </div>
             </div>
             <div class="season-body ${isExpanded ? 'open' : ''}">
-                ${regularEps.map(ep => buildEpisodeHTML(ep, season.number, safeDocId)).join('') || '<p>No episodes</p>'}
-                ${season.episodes?.filter(ep=>ep.is_special).length
+                ${regularEps.map(ep => buildEpisodeHTML(ep, season.number, safeDocId)).join('') || '<p style="padding:10px;color:var(--text3);">No episodes</p>'}
+                ${season.episodes?.filter(ep => ep.is_special).length
                     ? `<p style="color:var(--text3);font-size:11px;padding:8px 12px;font-style:italic;">
                         ${season.episodes.filter(ep=>ep.is_special).length} special(s) moved to Specials section
                        </p>`
@@ -1551,48 +1418,61 @@ function buildSeasonHTML(season, safeDocId) {
     `;
 }
 
-// ===== BUILD EPISODE HTML (regular episodes only) =====
+// ===== BUILD REGULAR EPISODE HTML =====
 function buildEpisodeHTML(ep, seasonNum, safeDocId) {
-    const today = new Date(); today.setHours(23,59,59,999);
-    const airDate = ep.air_date ? new Date(ep.air_date) : null;
+    const today    = new Date(); today.setHours(23,59,59,999);
+    const airDate  = ep.air_date ? new Date(ep.air_date) : null;
     const isUnaired = airDate && airDate > today;
 
     return `
-        <div class="episode ${ep.is_watched ? 'watched' : ''} ${isUnaired ? 'unaired' : ''}"
-             onclick="${isUnaired ? '' : `openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number})`}"
+        <div class="episode ${ep.is_watched ? 'watched' : ''}"
+             onclick="${isUnaired ? '' : `openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number},false)`}"
              style="${isUnaired ? 'opacity:0.5;cursor:default;' : ''}">
             <div class="episode-info">
                 <span class="episode-number">E${String(ep.number).padStart(2,'0')}</span>
                 - ${ep.name || 'Episode ' + ep.number}
-                ${isUnaired ? `<br><small style="color:var(--text3);">📅 Airs ${new Date(ep.air_date).toLocaleDateString()}</small>` : ''}
-                ${ep.watched_at && !isUnaired ? `<br><small style="color:var(--text3);">${new Date(ep.watched_at).toLocaleDateString()}</small>` : ''}
-                ${ep.rewatch_count > 0 ? `<br><small style="color:#2196F3;">↺ ${ep.rewatch_count}x</small>` : ''}
+                ${isUnaired
+                    ? `<br><small style="color:var(--text3);">📅 Airs ${new Date(ep.air_date).toLocaleDateString()}</small>`
+                    : ''}
+                ${ep.watched_at && !isUnaired
+                    ? `<br><small style="color:var(--text3);">${new Date(ep.watched_at).toLocaleDateString()}</small>`
+                    : ''}
+                ${ep.rewatch_count > 0
+                    ? `<br><small style="color:#2196F3;">↺ ${ep.rewatch_count}x</small>`
+                    : ''}
             </div>
             ${!isUnaired ? `
-            <button class="watch-btn ${ep.is_watched ? 'watched' : 'mark-watched'}"
-                    onclick="event.stopPropagation();toggleEpisode('${safeDocId}',${seasonNum},${ep.number},false)">
-                ${ep.is_watched ? '✓' : '○'}
-            </button>` : `<div style="width:40px;"></div>`}
+                <button class="watch-btn ${ep.is_watched ? 'watched' : 'mark-watched'}"
+                        onclick="event.stopPropagation();toggleEpisode('${safeDocId}',${seasonNum},${ep.number},false)">
+                    ${ep.is_watched ? '✓' : '○'}
+                </button>` : `<div style="width:40px;"></div>`}
         </div>
     `;
 }
 
 // ===== BUILD SPECIAL EPISODE HTML =====
-function buildSpecialEpisodeHTML(ep, safeDocId) {
-    // Specials use season 0 OR their fromSeason if inline special
-    const seasonNum = ep.fromSeason !== undefined ? ep.fromSeason : 0;
+// Specials show title only — no episode number prefix
+// Uses episode name as unique identifier alongside season/number
+function buildSpecialEpisodeHTML(ep, safeDocId, docId) {
+    // fromSeason = which regular season this imposter came from (if any)
+    // if it's a real Season 0 special, fromSeason is undefined
+    const fetchSeason = ep.fromSeason !== undefined ? ep.fromSeason : 0;
 
     return `
         <div class="episode ${ep.is_watched ? 'watched' : ''}"
-             onclick="openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number},true)">
+             onclick="openEpisodeDetail('${safeDocId}',${fetchSeason},${ep.number},true,'${(ep.name||'').replace(/'/g,"\\'")}')">
             <div class="episode-info">
                 <span class="special-tag">SPECIAL</span>
                 ${ep.name || 'Special Episode'}
-                ${ep.watched_at ? `<br><small style="color:var(--text3);">${new Date(ep.watched_at).toLocaleDateString()}</small>` : ''}
-                ${ep.rewatch_count > 0 ? `<br><small style="color:#2196F3;">↺ ${ep.rewatch_count}x</small>` : ''}
+                ${ep.watched_at
+                    ? `<br><small style="color:var(--text3);">${new Date(ep.watched_at).toLocaleDateString()}</small>`
+                    : ''}
+                ${ep.rewatch_count > 0
+                    ? `<br><small style="color:#2196F3;">↺ ${ep.rewatch_count}x</small>`
+                    : ''}
             </div>
             <button class="watch-btn ${ep.is_watched ? 'watched' : 'mark-watched'}"
-                    onclick="event.stopPropagation();toggleEpisode('${safeDocId}',${seasonNum},${ep.number},true)">
+                    onclick="event.stopPropagation();toggleEpisode('${safeDocId}',${fetchSeason},${ep.number},true,'${(ep.name||'').replace(/'/g,"\\'")}')">
                 ${ep.is_watched ? '✓' : '○'}
             </button>
         </div>
@@ -1615,7 +1495,7 @@ async function fetchEpisodeRatings(tmdbId, localSeasons) {
                     name: ep.name
                 });
             });
-        } catch (e) {}
+        } catch(e) {}
     }
     return ratings;
 }
@@ -1636,13 +1516,12 @@ function renderEpisodeRatingsChart(ratings) {
             datasets: [{
                 data: ratings.map(r => r.rating),
                 backgroundColor: ratings.map(r => colors[(r.season-1)%colors.length]+'99'),
-                borderColor: ratings.map(r => colors[(r.season-1)%colors.length]),
+                borderColor:     ratings.map(r => colors[(r.season-1)%colors.length]),
                 borderWidth: 1
             }]
         },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
+            responsive: true, maintainAspectRatio: false,
             plugins: {
                 legend: { display: false },
                 tooltip: { callbacks: {
@@ -1650,7 +1529,7 @@ function renderEpisodeRatingsChart(ratings) {
                     label: (i) => `${i.raw.toFixed(1)}/10`
                 }}
             },
-            scales: { y: { min: 0, max: 10 }, x: { ticks: { maxRotation: 90, font: { size: 9 } } } }
+            scales: { y: { min:0, max:10 }, x: { ticks: { maxRotation:90, font:{ size:9 } } } }
         }
     });
 }
@@ -1663,12 +1542,11 @@ function buildCastSection(cast) {
         <div class="cast-carousel" onwheel="event.preventDefault();this.scrollLeft+=event.deltaY;">
             ${cast.map(p => `
                 <div class="cast-card">
-                    <img src="${p.profile_path ? TMDB_IMG_BASE+p.profile_path : 'https://via.placeholder.com/60x60?text=?'}"
-                         alt="${p.name}" onerror="this.src='https://via.placeholder.com/60x60?text=?'">
+                    <img src="${p.profile_path ? TMDB_IMG_BASE+p.profile_path : PLACEHOLDER_AVATAR}"
+                         alt="${p.name}" onerror="this.src='${PLACEHOLDER_AVATAR}'">
                     <div class="cast-name">${p.name}</div>
-                    <div class="cast-character">${p.character || ''}</div>
-                </div>
-            `).join('')}
+                    <div class="cast-character">${p.character||''}</div>
+                </div>`).join('')}
         </div></div>`;
 }
 
@@ -1691,14 +1569,15 @@ function buildSimilarSection(items, type) {
         <div class="similar-section"><h3>🎬 Similar</h3>
         <div class="similar-carousel" onwheel="event.preventDefault();this.scrollLeft+=event.deltaY;">
             ${items.map(item => {
-                const t = item.title || item.name;
-                const p = item.poster_path ? TMDB_IMG_BASE+item.poster_path : 'https://via.placeholder.com/100x150?text=?';
-                const r = item.vote_average ? item.vote_average.toFixed(1) : 'N/A';
-                const y = (item.release_date || item.first_air_date || '').substring(0,4);
+                const t  = item.title || item.name;
+                const p  = item.poster_path ? TMDB_IMG_BASE+item.poster_path : PLACEHOLDER_SIMILAR;
+                const r  = item.vote_average ? item.vote_average.toFixed(1) : 'N/A';
+                const y  = (item.release_date || item.first_air_date || '').substring(0,4);
                 const st = (t||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+                const sp = p.replace(/'/g,"\\'");
                 return `
-                    <div class="similar-card" onclick="openPreview(${item.id},'${type}','${st}','${y}','${p}')">
-                        <img src="${p}" alt="${t}" onerror="this.src='https://via.placeholder.com/100x150?text=?'">
+                    <div class="similar-card" onclick="openPreview(${item.id},'${type}','${st}','${y}','${sp}')">
+                        <img src="${p}" alt="${t}" onerror="this.src='${PLACEHOLDER_SIMILAR}'">
                         <div class="similar-title">${t}</div>
                         <div class="similar-rating">⭐${r}</div>
                     </div>`;
@@ -1712,8 +1591,7 @@ function switchDetailTab(tabId) {
     document.querySelectorAll('.detail-tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.detail-tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(tabId)?.classList.add('active');
-    const btns = document.querySelectorAll('.detail-tab-btn');
-    btns.forEach(b => {
+    document.querySelectorAll('.detail-tab-btn').forEach(b => {
         if (tabId.includes('info') && b.textContent.trim() === 'Info') b.classList.add('active');
         if (tabId.includes('episodes') && b.textContent.trim() === 'Episodes') b.classList.add('active');
     });
@@ -1724,7 +1602,7 @@ function setupDetailSwipe() {
     if (!c) return;
     let sx = 0;
     c.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
-    c.addEventListener('touchend', (e) => {
+    c.addEventListener('touchend',   (e) => {
         const d = sx - e.changedTouches[0].clientX;
         if (Math.abs(d) > 60) switchDetailTab(d > 0 ? 'episodes-tab' : 'info-tab');
     });
@@ -1737,160 +1615,139 @@ function toggleOptionsMenu(id) {
 }
 
 // ===== EPISODE DETAIL =====
-async function openEpisodeDetail(docId, seasonNum, episodeNum, isSpecial = false) {
+// epName param is used to disambiguate specials with same number as real episodes
+async function openEpisodeDetail(docId, seasonNum, episodeNum, isSpecial = false, epName = '') {
     const item = myList.find(i => i.docId === docId);
     if (!item?.tmdb_id) return;
     const epModal = document.getElementById('episode-modal');
-    const epBody = document.getElementById('episode-modal-body');
+    const epBody  = document.getElementById('episode-modal-body');
     epBody.innerHTML = '<p class="empty-state">Loading...</p>';
     epModal.style.display = 'block';
 
-    // For inline specials, fetch from their original season
-    const fetchSeason = isSpecial && seasonNum !== 0 ? seasonNum : seasonNum;
-
     try {
-        const data = await tmdbFetch(`${TMDB_BASE_URL}/tv/${item.tmdb_id}/season/${fetchSeason}/episode/${episodeNum}?api_key=${TMDB_API_KEY}&append_to_response=credits`);
-        const still = data.still_path ? `${TMDB_IMG_BASE}${data.still_path}` : '';
-        const r = data.vote_average ? data.vote_average.toFixed(1) : 'N/A';
-        const air = data.air_date ? new Date(data.air_date).toLocaleDateString() : 'N/A';
-        const allCast = [...(data.guest_stars||[]),...(data.credits?.cast||[])].slice(0,12);
-
-        // Find local episode — use is_special flag to disambiguate
-        const localSeason = item.seasons?.find(s => s.number === seasonNum);
-        const localEp = localSeason?.episodes?.find(e =>
-            e.number === episodeNum &&
-            (isSpecial ? e.is_special : !e.is_special)
+        // For specials that came from a regular season (imposters),
+        // we fetch from that season. For real Season 0 specials,
+        // we fetch from season 0.
+        const data = await tmdbFetch(
+            `${TMDB_BASE_URL}/tv/${item.tmdb_id}/season/${seasonNum}/episode/${episodeNum}?api_key=${TMDB_API_KEY}&append_to_response=credits`
         );
 
+        // If this is a special, we need to verify we got the right episode
+        // by checking if the title matches what we expected
+        let displayData = data;
+        if (isSpecial && epName && data.name && !titlesMatch(data.name, epName)) {
+            // The fetched data doesn't match — we got the wrong episode
+            // Show what we have from local storage instead
+            displayData = {
+                name: epName,
+                overview: 'Episode details not available.',
+                vote_average: 0,
+                air_date: null,
+                runtime: null,
+                still_path: null,
+                guest_stars: [],
+                credits: { cast: [] }
+            };
+        }
+
+        const still   = displayData.still_path ? `${TMDB_IMG_BASE}${displayData.still_path}` : '';
+        const r       = displayData.vote_average ? displayData.vote_average.toFixed(1) : 'N/A';
+        const air     = displayData.air_date ? new Date(displayData.air_date).toLocaleDateString() : 'N/A';
+        const allCast = [...(displayData.guest_stars||[]),...(displayData.credits?.cast||[])].slice(0,12);
+
+        // Find local episode — use title to disambiguate when isSpecial
+        const localSeason = item.seasons?.find(s => s.number === seasonNum);
+        let localEp;
+        if (isSpecial && epName) {
+            localEp = localSeason?.episodes?.find(e =>
+                e.number === episodeNum && e.is_special && titlesMatch(e.name || '', epName)
+            );
+        } else {
+            localEp = localSeason?.episodes?.find(e =>
+                e.number === episodeNum && !e.is_special
+            );
+        }
+
         const sd = docId.replace(/'/g, "\\'");
+        const safeEpName = (epName || '').replace(/'/g, "\\'");
 
         epBody.innerHTML = `
             <div class="ep-detail-header">
                 ${still ? `<img src="${still}" onerror="this.style.display='none'">` : ''}
                 <div class="ep-detail-info">
-                    <h3>${data.name || `Episode ${episodeNum}`}</h3>
-                    ${isSpecial ? '<span style="background:#FF6B35;color:white;padding:2px 8px;border-radius:8px;font-size:11px;">SPECIAL</span>' : ''}
+                    <h3>${displayData.name || epName || `Episode ${episodeNum}`}</h3>
+                    ${isSpecial ? '<span style="background:#FF6B35;color:white;padding:2px 8px;border-radius:8px;font-size:11px;display:inline-block;margin-bottom:4px;">SPECIAL</span>' : ''}
                     <div class="ep-code">S${String(seasonNum).padStart(2,'0')}E${String(episodeNum).padStart(2,'0')}</div>
                     <div class="ep-rating">⭐ ${r}/10</div>
                     <p style="color:var(--text2);font-size:13px;">📅 ${air}</p>
-                    ${data.runtime ? `<p style="color:var(--text2);font-size:13px;">⏱ ${data.runtime}min</p>` : ''}
+                    ${displayData.runtime ? `<p style="color:var(--text2);font-size:13px;">⏱ ${displayData.runtime}min</p>` : ''}
                 </div>
             </div>
             <div style="margin:15px 0;">
-                <button onclick="toggleEpisode('${sd}',${seasonNum},${episodeNum},${isSpecial});document.getElementById('episode-modal').style.display='none';"
-                        class="watch-btn ${localEp?.is_watched ? 'watched' : 'mark-watched'}" style="padding:10px 24px;">
+                <button onclick="toggleEpisode('${sd}',${seasonNum},${episodeNum},${isSpecial},'${safeEpName}');document.getElementById('episode-modal').style.display='none';"
+                        class="watch-btn ${localEp?.is_watched ? 'watched' : 'mark-watched'}"
+                        style="padding:10px 24px;">
                     ${localEp?.is_watched ? '✓ Watched' : '○ Mark Watched'}
                 </button>
-                ${localEp?.rewatch_count > 0 ? `<p style="margin-top:6px;color:#2196F3;font-size:12px;">↺ ${localEp.rewatch_count}x</p>` : ''}
+                ${localEp?.rewatch_count > 0
+                    ? `<p style="margin-top:6px;color:#2196F3;font-size:12px;">↺ ${localEp.rewatch_count}x</p>`
+                    : ''}
             </div>
-            <div class="ep-detail-synopsis"><h4 style="color:var(--accent);margin-bottom:8px;">Synopsis</h4><p>${data.overview || 'No synopsis.'}</p></div>
+            <div class="ep-detail-synopsis">
+                <h4 style="color:var(--accent);margin-bottom:8px;">Synopsis</h4>
+                <p>${displayData.overview || 'No synopsis.'}</p>
+            </div>
             ${allCast.length ? `
                 <div class="ep-guest-cast"><h4>Cast</h4>
                 <div class="cast-carousel" onwheel="event.preventDefault();this.scrollLeft+=event.deltaY;">
                     ${allCast.map(p => `
                         <div class="cast-card">
-                            <img src="${p.profile_path ? TMDB_IMG_BASE+p.profile_path : 'https://via.placeholder.com/60x60?text=?'}"
-                                 onerror="this.src='https://via.placeholder.com/60x60?text=?'">
+                            <img src="${p.profile_path ? TMDB_IMG_BASE+p.profile_path : PLACEHOLDER_AVATAR}"
+                                 onerror="this.src='${PLACEHOLDER_AVATAR}'">
                             <div class="cast-name">${p.name}</div>
                             <div class="cast-character">${p.character||''}</div>
-                        </div>
-                    `).join('')}
+                        </div>`).join('')}
                 </div></div>` : ''}
         `;
-    } catch (e) {
+    } catch(e) {
         epBody.innerHTML = '<p class="empty-state">Failed to load.</p>';
     }
 }
 
-// ===== ADD/REMOVE =====
-async function addToList(tmdbId, type, title, year, poster) {
-    try {
-        const col = type === 'movie' ? 'movies' : 'series';
-        const docId = `${type}_${tmdbId}`;
-        let data = {
-            tmdb_id: tmdbId, title, year, poster,
-            is_favorite: false,
-            created_at: new Date().toISOString()
-        };
-
-        if (type === 'tv') {
-            const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
-            data.user_status = 'Planned';
-            data.tmdb_status = det.status || 'Unknown';
-            data.last_status_check = new Date().toISOString();
-            data.last_synced = new Date().toISOString();
-            data.is_anime = isAnimeShow(det);
-            data.tmdb_rating = det.vote_average || null;
-            data.seasons = [];
-
-            for (let i = 0; i <= det.number_of_seasons; i++) {
-                try {
-                    const sd = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}/season/${i}?api_key=${TMDB_API_KEY}`);
-                    if (!sd.episodes?.length) continue;
-
-                    const episodes = sd.episodes.map(ep => ({
-                        number: ep.episode_number,
-                        name: ep.name || `Episode ${ep.episode_number}`,
-                        air_date: ep.air_date || null,
-                        is_watched: false,
-                        watched_at: null,
-                        rewatch_count: 0,
-                        rewatch_history: [],
-                        is_special: i === 0
-                    }));
-
-                    // Detect duplicate episode numbers in regular seasons
-                    const fixed = i === 0 ? episodes : detectAndFixDuplicateEpisodes(episodes, i);
-
-                    data.seasons.push({
-                        number: i,
-                        is_specials: i === 0,
-                        episodes: fixed
-                    });
-                } catch (e) {}
-            }
-        } else {
-            const det = await tmdbFetch(`${TMDB_BASE_URL}/movie/${tmdbId}?api_key=${TMDB_API_KEY}`);
-            data.is_watched = false;
-            data.watched_at = null;
-            data.tmdb_rating = det.vote_average || null;
-            data.rewatch_count = 0;
-            data.rewatch_history = [];
-        }
-
-        await setDoc(doc(db, col, docId), data);
-        await loadMyList();
-    } catch (e) { console.error(e); alert('Error adding.'); }
-}
-
-async function removeFromList(docId, type) {
-    const a = await showConfirm('Remove?', 'Remove from library?', 'Remove', 'Cancel');
-    if (a !== 'yes') return;
-    try {
-        await deleteDoc(doc(db, type === 'movie' ? 'movies' : 'series', docId));
-        await loadMyList();
-        document.getElementById('modal').style.display = 'none';
-    } catch (e) { console.error(e); }
-}
-
-async function removeFromListByTMDB(tmdbId, type) {
-    await removeFromList(`${type}_${tmdbId}`, type);
+// Check if two titles are similar enough (>50% word overlap)
+function titlesMatch(a, b) {
+    return titleSimilarity(a, b) > 0.5;
 }
 
 // ===== TOGGLE EPISODE =====
-// isSpecial flag ensures we find the right episode (avoids duplicate number conflict)
-async function toggleEpisode(docId, seasonNum, episodeNum, isSpecial = false) {
+// epName is used to find the EXACT special episode when numbers conflict
+async function toggleEpisode(docId, seasonNum, episodeNum, isSpecial = false, epName = '') {
     const item = myList.find(i => i.docId === docId);
     if (!item) return;
 
     const season = item.seasons.find(s => s.number === seasonNum);
     if (!season) return;
 
-    // KEY FIX: use isSpecial to disambiguate episodes with same number
-    const episode = season.episodes.find(e =>
-        e.number === episodeNum &&
-        (isSpecial ? e.is_special === true : !e.is_special)
-    );
+    // KEY FIX: find episode using BOTH isSpecial flag AND title match for specials
+    let episode;
+    if (isSpecial && epName) {
+        episode = season.episodes.find(e =>
+            e.number === episodeNum &&
+            e.is_special &&
+            titlesMatch(e.name || '', epName)
+        );
+        // Fallback: any special with that number
+        if (!episode) {
+            episode = season.episodes.find(e => e.number === episodeNum && e.is_special);
+        }
+        // Last resort: Season 0 episodes (which may not have is_special set)
+        if (!episode && seasonNum === 0) {
+            episode = season.episodes.find(e => e.number === episodeNum);
+        }
+    } else {
+        episode = season.episodes.find(e => e.number === episodeNum && !e.is_special);
+    }
+
     if (!episode) return;
 
     activeDetailTab = 'episodes-tab';
@@ -1907,12 +1764,11 @@ async function toggleEpisode(docId, seasonNum, episodeNum, isSpecial = false) {
             episode.watched_at = null;
         } else return;
     } else {
-        // Only check previous for non-specials
         if (!isSpecial && seasonNum !== 0) {
             const prev = getPreviousUnwatchedEpisodes(item, seasonNum, episodeNum);
             if (prev.length > 0) {
                 const a = await showConfirm('Mark Previous?', `${prev.length} unwatched before this.`, 'Yes, all', 'Just this');
-                if (a === 'yes') prev.forEach(({seasonNum: sN, episodeNum: eN}) => {
+                if (a === 'yes') prev.forEach(({seasonNum:sN, episodeNum:eN}) => {
                     const s = item.seasons.find(s => s.number === sN);
                     const e = s?.episodes.find(e => e.number === eN && !e.is_special);
                     if (e) { e.is_watched = true; e.watched_at = new Date().toISOString(); }
@@ -1925,19 +1781,19 @@ async function toggleEpisode(docId, seasonNum, episodeNum, isSpecial = false) {
 
     try {
         await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
-        // Update local state WITHOUT full re-render to preserve expanded seasons
         const local = myList.find(i => i.docId === docId);
         if (local) local.seasons = item.seasons;
 
-        // Re-render just the detail page, preserving expanded seasons
+        // Re-render detail page WITHOUT collapsing seasons
         const body = document.getElementById('modal-body');
-        if (body) await openTVDetails(item, body, docId.replace(/'/g, "\\'"));
+        if (body && document.getElementById('modal').style.display !== 'none') {
+            await openTVDetails(item, body, docId.replace(/'/g, "\\'"));
+        }
 
-        // Update continue/history in background
         const section = item.is_anime ? 'anime' : 'tv';
         renderContinueWatching(section);
         renderHistory(section);
-    } catch (e) { console.error(e); }
+    } catch(e) { console.error(e); }
 }
 
 // ===== MARK SEASON =====
@@ -1947,7 +1803,6 @@ async function markSeasonWatched(docId, seasonNum) {
     const season = item.seasons.find(s => s.number === seasonNum);
     if (!season) return;
 
-    // Only work on non-special aired episodes
     const today = new Date(); today.setHours(23,59,59,999);
     const regularEps = season.episodes.filter(ep => {
         if (ep.is_special) return false;
@@ -1977,7 +1832,8 @@ async function markSeasonWatched(docId, seasonNum) {
                 s.episodes?.some(e => !e.is_watched && !e.is_special)
             );
             if (prevSeasons.length > 0) {
-                const a = await showConfirm('Previous Seasons?', `${prevSeasons.length} season(s) have unwatched eps.`, 'Mark all prev', 'Just this');
+                const a = await showConfirm('Previous Seasons?',
+                    `${prevSeasons.length} season(s) have unwatched eps.`, 'Mark all prev', 'Just this');
                 if (a === 'yes') prevSeasons.forEach(s =>
                     s.episodes.filter(ep => !ep.is_special).forEach(ep => {
                         ep.is_watched = true; ep.watched_at = new Date().toISOString();
@@ -1993,11 +1849,137 @@ async function markSeasonWatched(docId, seasonNum) {
         const local = myList.find(i => i.docId === docId);
         if (local) local.seasons = item.seasons;
         const body = document.getElementById('modal-body');
-        if (body) await openTVDetails(item, body, docId.replace(/'/g, "\\'"));
+        if (body && document.getElementById('modal').style.display !== 'none') {
+            await openTVDetails(item, body, docId.replace(/'/g, "\\'"));
+        }
         const section = item.is_anime ? 'anime' : 'tv';
         renderContinueWatching(section);
         renderHistory(section);
-    } catch (e) { console.error(e); }
+    } catch(e) { console.error(e); }
+}
+
+// ===== TAG SPECIALS MODAL — with season filter =====
+function openTagSpecialsModal(docId) {
+    const item = myList.find(i => i.docId === docId);
+    if (!item) return;
+    document.querySelectorAll('.options-menu').forEach(m => m.classList.remove('show'));
+
+    let modal = document.getElementById('tag-specials-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'tag-specials-modal';
+        modal.className = 'modal';
+        modal.style.zIndex = '3000';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width:620px;">
+                <span class="close" onclick="document.getElementById('tag-specials-modal').style.display='none'">&times;</span>
+                <div id="tag-specials-body"></div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    const body = document.getElementById('tag-specials-body');
+
+    // Build season options
+    const seasonOptions = (item.seasons || [])
+        .sort((a,b) => a.number - b.number)
+        .map(s => `<option value="${s.number}">
+            ${s.number === 0 ? 'Specials (S00)' : `Season ${s.number}`}
+        </option>`)
+        .join('');
+
+    body.innerHTML = `
+        <h3 style="color:var(--accent);margin-bottom:12px;">🎭 Tag Episodes as Special</h3>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:12px;">
+            Check episodes that are specials/OVAs. They will be grouped under Specials.
+        </p>
+        <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <label style="font-size:13px;color:var(--text2);">Filter by season:</label>
+            <select id="tag-season-filter" onchange="filterTagSpecials('${docId}')"
+                    style="padding:6px 10px;border:2px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;">
+                <option value="all">All Seasons</option>
+                ${seasonOptions}
+            </select>
+        </div>
+        <div id="tag-specials-list" style="max-height:420px;overflow-y:auto;">
+            ${buildTagSpecialsList(item, 'all')}
+        </div>
+        <div style="margin-top:15px;display:flex;gap:10px;justify-content:flex-end;">
+            <button onclick="document.getElementById('tag-specials-modal').style.display='none'"
+                    style="padding:10px 20px;border:2px solid var(--border);background:var(--surface);color:var(--text);border-radius:8px;cursor:pointer;">
+                Cancel
+            </button>
+            <button onclick="applySpecialTags('${docId}')"
+                    style="padding:10px 20px;background:var(--accent);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">
+                Save
+            </button>
+        </div>
+    `;
+
+    modal.style.display = 'block';
+}
+
+function buildTagSpecialsList(item, filterSeason) {
+    let rows = '';
+    (item.seasons || []).forEach(s => {
+        if (filterSeason !== 'all' && s.number !== parseInt(filterSeason)) return;
+        (s.episodes || []).forEach((ep, idx) => {
+            const isSpecial = ep.is_special || s.number === 0;
+            const label = s.number === 0
+                ? `S00 · ${ep.name || 'Special'}`
+                : `S${String(s.number).padStart(2,'0')}E${String(ep.number).padStart(2,'0')} · ${ep.name || 'Episode ' + ep.number}`;
+            rows += `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--border);">
+                    <input type="checkbox" class="tag-special-cb"
+                           ${isSpecial ? 'checked' : ''}
+                           data-season="${s.number}" data-ep="${ep.number}"
+                           data-name="${(ep.name||'').replace(/"/g,'&quot;')}">
+                    <label style="font-size:13px;color:var(--text);cursor:pointer;flex:1;">
+                        ${label}
+                        ${isSpecial ? '<span style="background:#FF6B35;color:white;padding:1px 6px;border-radius:8px;font-size:10px;margin-left:6px;">SPECIAL</span>' : ''}
+                    </label>
+                </div>
+            `;
+        });
+    });
+    return rows || '<p class="empty-state">No episodes found.</p>';
+}
+
+function filterTagSpecials(docId) {
+    const item = myList.find(i => i.docId === docId);
+    if (!item) return;
+    const filter = document.getElementById('tag-season-filter')?.value || 'all';
+    const listEl = document.getElementById('tag-specials-list');
+    if (listEl) listEl.innerHTML = buildTagSpecialsList(item, filter);
+}
+
+async function applySpecialTags(docId) {
+    const item = myList.find(i => i.docId === docId);
+    if (!item) return;
+
+    document.querySelectorAll('.tag-special-cb').forEach(cb => {
+        const seasonNum = parseInt(cb.dataset.season);
+        const epNum     = parseInt(cb.dataset.ep);
+        const epName    = cb.dataset.name || '';
+        const season    = item.seasons.find(s => s.number === seasonNum);
+        if (!season) return;
+
+        // Find by number AND name to avoid wrong episode being tagged
+        const ep = season.episodes.find(e =>
+            e.number === epNum &&
+            (epName ? titlesMatch(e.name || '', epName) : true)
+        ) || season.episodes.find(e => e.number === epNum);
+
+        if (ep) ep.is_special = cb.checked;
+    });
+
+    try {
+        await updateDoc(doc(db, 'series', docId), { seasons: item.seasons });
+        document.getElementById('tag-specials-modal').style.display = 'none';
+        await loadMyList();
+        openDetails(docId, 'tv', activeDetailTab);
+    } catch(e) { console.error(e); }
 }
 
 // ===== TOGGLE FAVORITE =====
@@ -2006,17 +1988,16 @@ async function toggleFavorite(docId, type) {
     if (!item) return;
     item.is_favorite = !item.is_favorite;
     try {
-        await updateDoc(doc(db, type === 'movie' ? 'movies' : 'series', docId), { is_favorite: item.is_favorite });
+        await updateDoc(doc(db, type==='movie'?'movies':'series', docId), { is_favorite: item.is_favorite });
         await loadMyList();
         openDetails(docId, type);
-    } catch (e) { console.error(e); }
+    } catch(e) { console.error(e); }
 }
 
 // ===== TOGGLE WATCHED (Movies) =====
 async function toggleWatched(docId, type) {
     const item = myList.find(i => i.docId === docId);
     if (!item) return;
-
     if (item.is_watched) {
         const a = await showConfirm('Already Watched', 'What to do?', '↺ Rewatch', '✗ Unmark');
         if (a === 'yes') {
@@ -2024,25 +2005,20 @@ async function toggleWatched(docId, type) {
             if (!item.rewatch_history) item.rewatch_history = [];
             item.rewatch_history.push(new Date().toISOString());
             item.watched_at = new Date().toISOString();
-        } else if (a === 'no') {
-            item.is_watched = false;
-            item.watched_at = null;
-        } else return;
+        } else if (a === 'no') { item.is_watched = false; item.watched_at = null; }
+        else return;
     } else {
         item.is_watched = true;
         item.watched_at = new Date().toISOString();
     }
-
     try {
         await updateDoc(doc(db, 'movies', docId), {
-            is_watched: item.is_watched,
-            watched_at: item.watched_at,
-            rewatch_count: item.rewatch_count || 0,
-            rewatch_history: item.rewatch_history || []
+            is_watched: item.is_watched, watched_at: item.watched_at,
+            rewatch_count: item.rewatch_count||0, rewatch_history: item.rewatch_history||[]
         });
         await loadMyList();
         openDetails(docId, type);
-    } catch (e) { console.error(e); }
+    } catch(e) { console.error(e); }
 }
 
 // ===== SET STATUS / ANIME =====
@@ -2053,7 +2029,7 @@ async function setUserStatus(docId, status) {
         if (item) item.user_status = status;
         await loadMyList();
         openDetails(docId, 'tv');
-    } catch (e) { console.error(e); }
+    } catch(e) { console.error(e); }
 }
 
 async function toggleAnimeStatus(docId) {
@@ -2064,33 +2040,31 @@ async function toggleAnimeStatus(docId) {
         item.is_anime = !item.is_anime;
         await loadMyList();
         openDetails(docId, 'tv');
-    } catch (e) { console.error(e); }
+    } catch(e) { console.error(e); }
 }
 
 // ===== CALENDAR =====
 async function loadSectionCalendar(section) {
-    const isAnime = section === 'anime';
-    const shows = isAnime ? getAnime() : getTVShows();
-    const todayEl = document.getElementById(`${section}-calendar-today`);
-    const weekEl = document.getElementById(`${section}-calendar-week`);
+    const isAnime   = section === 'anime';
+    const shows     = isAnime ? getAnime() : getTVShows();
+    const todayEl   = document.getElementById(`${section}-calendar-today`);
+    const weekEl    = document.getElementById(`${section}-calendar-week`);
     const upcomingEl = document.getElementById(`${section}-calendar-upcoming`);
 
-    const today = new Date();
+    const today    = new Date();
     const todayStr = today.toISOString().split('T')[0];
-    const weekStr = new Date(today.getTime() + 7*86400000).toISOString().split('T')[0];
+    const weekStr  = new Date(today.getTime() +  7*86400000).toISOString().split('T')[0];
     const monthStr = new Date(today.getTime() + 30*86400000).toISOString().split('T')[0];
-    const thirtyDaysAgo = new Date(today.getTime() - 30*86400000);
 
-    const toCheck = shows.filter(s => {
-        if (!s.tmdb_id) return false;
-        return ['Returning Series', 'In Production', 'Unknown'].includes(s.tmdb_status);
-    });
+    const toCheck = shows.filter(s =>
+        s.tmdb_id && ['Returning Series','In Production','Unknown'].includes(s.tmdb_status)
+    );
 
     todayEl.innerHTML = `<p class="empty-state">Checking ${toCheck.length} shows...</p>`;
     weekEl.innerHTML = '';
     upcomingEl.innerHTML = '';
 
-    const tEps = [], wEps = [], uEps = [];
+    const tEps=[], wEps=[], uEps=[];
     let checked = 0;
 
     for (const show of toCheck) {
@@ -2100,23 +2074,19 @@ async function loadSectionCalendar(section) {
             const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}?api_key=${TMDB_API_KEY}`);
 
             if (det.status && det.status !== show.tmdb_status) {
-                updateDoc(doc(db, 'series', show.docId), {
-                    tmdb_status: det.status,
-                    last_status_check: new Date().toISOString()
-                }).catch(() => {});
+                updateDoc(doc(db,'series',show.docId),{
+                    tmdb_status: det.status, last_status_check: new Date().toISOString()
+                }).catch(()=>{});
             }
 
-            if (['Returning Series', 'In Production'].includes(det.status) && det.next_episode_to_air) {
+            if (['Returning Series','In Production'].includes(det.status) && det.next_episode_to_air) {
                 const ad = det.next_episode_to_air.air_date;
                 const ep = {
-                    show: show.title,
-                    poster: show.poster,
-                    docId: show.docId,
+                    show: show.title, poster: show.poster, docId: show.docId,
                     season: det.next_episode_to_air.season_number,
                     episode: det.next_episode_to_air.episode_number,
                     name: det.next_episode_to_air.name,
-                    airDate: ad,
-                    airDateObj: new Date(ad)
+                    airDate: ad, airDateObj: new Date(ad)
                 };
                 if (ad === todayStr) tEps.push(ep);
                 else if (ad > todayStr && ad <= weekStr) wEps.push(ep);
@@ -2126,9 +2096,8 @@ async function loadSectionCalendar(section) {
         } catch(e) {}
     }
 
-    // Cache results
     const cacheKey = `upcomingCache_${section}`;
-    localStorage.setItem(cacheKey, JSON.stringify({ today: tEps, week: wEps, upcoming: uEps }));
+    localStorage.setItem(cacheKey, JSON.stringify({ today:tEps, week:wEps, upcoming:uEps }));
     localStorage.setItem(`${cacheKey}_time`, Date.now().toString());
 
     displayCalItems(todayEl, tEps, true);
@@ -2137,11 +2106,11 @@ async function loadSectionCalendar(section) {
 }
 
 function displayCalendarFromCache(section, data) {
-    const todayEl = document.getElementById(`${section}-calendar-today`);
-    const weekEl = document.getElementById(`${section}-calendar-week`);
+    const todayEl    = document.getElementById(`${section}-calendar-today`);
+    const weekEl     = document.getElementById(`${section}-calendar-week`);
     const upcomingEl = document.getElementById(`${section}-calendar-upcoming`);
-    if (todayEl) displayCalItems(todayEl, data.today || [], true);
-    if (weekEl) displayCalItems(weekEl, data.week || [], false);
+    if (todayEl)    displayCalItems(todayEl,    data.today    || [], true);
+    if (weekEl)     displayCalItems(weekEl,     data.week     || [], false);
     if (upcomingEl) displayCalItems(upcomingEl, data.upcoming || [], false);
 }
 
@@ -2149,15 +2118,14 @@ function displayCalItems(container, episodes, isToday) {
     if (!episodes.length) { container.innerHTML = '<p class="empty-state">No episodes.</p>'; return; }
     episodes.sort((a, b) => new Date(a.airDateObj) - new Date(b.airDateObj));
     container.innerHTML = episodes.map(ep => {
-        const p = ep.poster && !ep.poster.includes('placeholder')
-            ? ep.poster : 'https://via.placeholder.com/50x75?text=?';
+        const p = safePoster(ep.poster, 'thumb');
         return `
-            <div class="calendar-item ${isToday ? 'airing-today' : ''}" onclick="openDetails('${ep.docId}','tv')">
-                <img src="${p}" onerror="this.src='https://via.placeholder.com/50x75?text=?'">
+            <div class="calendar-item ${isToday?'airing-today':''}" onclick="openDetails('${ep.docId}','tv')">
+                <img src="${p}" onerror="this.src='${PLACEHOLDER_THUMB}'">
                 <div class="calendar-item-info">
                     <h4>${ep.show}</h4>
                     <div class="episode-title">S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} - ${ep.name}</div>
-                    <div class="air-date ${isToday ? 'today' : ''}">
+                    <div class="air-date ${isToday?'today':''}">
                         📅 ${formatAirDate(new Date(ep.airDateObj))}
                         ${isToday ? '<span class="calendar-badge">TODAY</span>' : ''}
                     </div>
@@ -2170,9 +2138,78 @@ function formatAirDate(date) {
     const t = new Date(); t.setHours(0,0,0,0);
     const tm = new Date(t); tm.setDate(tm.getDate()+1);
     const c = new Date(date); c.setHours(0,0,0,0);
-    if (c.getTime() === t.getTime()) return 'Today';
+    if (c.getTime() === t.getTime())  return 'Today';
     if (c.getTime() === tm.getTime()) return 'Tomorrow';
     return date.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+}
+
+// ===== ADD / REMOVE =====
+async function addToList(tmdbId, type, title, year, poster) {
+    try {
+        const col   = type === 'movie' ? 'movies' : 'series';
+        const docId = `${type}_${tmdbId}`;
+        let data = { tmdb_id:tmdbId, title, year, poster, is_favorite:false, created_at:new Date().toISOString() };
+
+        if (type === 'tv') {
+            const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
+            data.user_status = 'Planned';
+            data.tmdb_status = det.status || 'Unknown';
+            data.last_status_check = new Date().toISOString();
+            data.last_synced = new Date().toISOString();
+            data.is_anime   = isAnimeShow(det);
+            data.tmdb_rating = det.vote_average || null;
+            data.seasons = [];
+
+            // Build TMDB episode map per season for imposter detection
+            for (let i = 0; i <= det.number_of_seasons; i++) {
+                try {
+                    const sd = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}/season/${i}?api_key=${TMDB_API_KEY}`);
+                    if (!sd.episodes?.length) continue;
+
+                    const tmdbEpMap = {};
+                    sd.episodes.forEach(ep => { tmdbEpMap[ep.episode_number] = ep.name; });
+
+                    const episodes = sd.episodes.map(ep => ({
+                        number:    ep.episode_number,
+                        name:      ep.name || `Episode ${ep.episode_number}`,
+                        air_date:  ep.air_date || null,
+                        is_watched: false,
+                        watched_at: null,
+                        rewatch_count:   0,
+                        rewatch_history: [],
+                        is_special: i === 0
+                    }));
+
+                    const fixed = i === 0 ? episodes : detectImposters(episodes, tmdbEpMap, null);
+                    data.seasons.push({ number:i, is_specials:i===0, episodes:fixed });
+                } catch(e) {}
+            }
+        } else {
+            const det = await tmdbFetch(`${TMDB_BASE_URL}/movie/${tmdbId}?api_key=${TMDB_API_KEY}`);
+            data.is_watched  = false;
+            data.watched_at  = null;
+            data.tmdb_rating = det.vote_average || null;
+            data.rewatch_count   = 0;
+            data.rewatch_history = [];
+        }
+
+        await setDoc(doc(db, col, docId), data);
+        await loadMyList();
+    } catch(e) { console.error(e); alert('Error adding.'); }
+}
+
+async function removeFromList(docId, type) {
+    const a = await showConfirm('Remove?', 'Remove from library?', 'Remove', 'Cancel');
+    if (a !== 'yes') return;
+    try {
+        await deleteDoc(doc(db, type==='movie'?'movies':'series', docId));
+        await loadMyList();
+        document.getElementById('modal').style.display = 'none';
+    } catch(e) { console.error(e); }
+}
+
+async function removeFromListByTMDB(tmdbId, type) {
+    await removeFromList(`${type}_${tmdbId}`, type);
 }
 
 // ===== RESCAN ANIME =====
@@ -2181,21 +2218,19 @@ async function rescanAnime() {
     const shows = myList.filter(i => i.type === 'tv' && i.tmdb_id);
     statusEl.innerHTML = `<p style="color:var(--accent);">Scanning ${shows.length} shows...</p>`;
     let changed = 0;
-
     for (let i = 0; i < shows.length; i++) {
         try {
             statusEl.innerHTML = `<p style="color:var(--accent);">Scanning ${i+1}/${shows.length}...</p>`;
             const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${shows[i].tmdb_id}?api_key=${TMDB_API_KEY}`);
             const shouldBe = isAnimeShow(det);
             if (shouldBe !== shows[i].is_anime) {
-                await updateDoc(doc(db, 'series', shows[i].docId), { is_anime: shouldBe });
+                await updateDoc(doc(db,'series',shows[i].docId),{is_anime:shouldBe});
                 shows[i].is_anime = shouldBe;
                 changed++;
             }
-            if (i % 20 === 0) await new Promise(r => setTimeout(r, 500));
+            if (i % 20 === 0) await new Promise(r=>setTimeout(r,500));
         } catch(e) {}
     }
-
     statusEl.innerHTML = `<p style="color:var(--green);">✓ Done! ${changed} shows updated.</p>`;
     await loadMyList();
 }
@@ -2205,37 +2240,31 @@ async function autoTagStatuses() {
     const statusEl = document.getElementById('settings-action-status');
     statusEl.innerHTML = '<p style="color:var(--accent);">Tagging...</p>';
     let changed = 0;
-
     for (const item of myList) {
         if (item.type !== 'tv') continue;
-        const progress = getShowProgressExcludingSpecials(item);
-        const hasWatched = item.seasons?.some(s =>
-            s.number !== 0 && s.episodes?.some(e => e.is_watched && !e.is_special)
-        );
+        const progress   = getShowProgressExcludingSpecials(item);
+        const hasWatched = item.seasons?.some(s => s.number!==0 && s.episodes?.some(e=>e.is_watched&&!e.is_special));
         const tmdb = item.tmdb_status || '';
         let newStatus = item.user_status;
-
         if (!hasWatched && !['Dropped','Paused'].includes(item.user_status)) newStatus = 'Planned';
-        else if (progress >= 100 && (tmdb === 'Ended' || tmdb === 'Canceled')) newStatus = 'Finished';
-        else if (progress >= 100 && tmdb === 'Returning Series') newStatus = 'Up to Date';
-        else if (hasWatched && progress < 100 && !['Dropped','Paused','Finished'].includes(item.user_status)) newStatus = 'Watching';
-
+        else if (progress>=100 && (tmdb==='Ended'||tmdb==='Canceled')) newStatus = 'Finished';
+        else if (progress>=100 && tmdb==='Returning Series') newStatus = 'Up to Date';
+        else if (hasWatched && progress<100 && !['Dropped','Paused','Finished'].includes(item.user_status)) newStatus = 'Watching';
         if (newStatus !== item.user_status) {
-            await updateDoc(doc(db, 'series', item.docId), { user_status: newStatus });
+            await updateDoc(doc(db,'series',item.docId),{user_status:newStatus});
             item.user_status = newStatus;
             changed++;
         }
     }
-
     statusEl.innerHTML = `<p style="color:var(--green);">✓ ${changed} shows updated.</p>`;
     await loadMyList();
 }
 
 // ===== BULK TAGGER =====
 function openBulkTagger() {
-    const modal = document.getElementById('bulk-modal');
-    const body = document.getElementById('bulk-modal-body');
-    const shows = myList.filter(i => i.type === 'tv');
+    const modal  = document.getElementById('bulk-modal');
+    const body   = document.getElementById('bulk-modal-body');
+    const shows  = myList.filter(i => i.type === 'tv');
     const movies = myList.filter(i => i.type === 'movie');
 
     body.innerHTML = `
@@ -2247,16 +2276,18 @@ function openBulkTagger() {
                 <option value="tv">TV Shows</option>
                 <option value="movie">Movies</option>
             </select>
-            <button onclick="selectAllBulk()" style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;">Select All</button>
+            <button onclick="selectAllBulk()"
+                    style="padding:6px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;">
+                Select All
+            </button>
         </div>
         <div class="bulk-list" id="bulk-list">
             ${[...shows,...movies].map(item => `
                 <div class="bulk-item" data-type="${item.type}" data-anime="${item.is_anime||false}">
                     <input type="checkbox" value="${item.docId}" data-item-type="${item.type}">
-                    <img src="${item.poster && !item.poster.includes('placeholder') ? item.poster : 'https://via.placeholder.com/36x54?text=?'}"
-                         onerror="this.src='https://via.placeholder.com/36x54?text=?'">
+                    <img src="${safePoster(item.poster,'thumb')}" onerror="this.src='${PLACEHOLDER_THUMB}'">
                     <span class="bulk-item-title">${item.title}</span>
-                    <span class="bulk-item-status">${item.user_status || (item.is_watched ? 'Watched' : '—')}</span>
+                    <span class="bulk-item-status">${item.user_status||(item.is_watched?'Watched':'—')}</span>
                 </div>
             `).join('')}
         </div>
@@ -2284,10 +2315,10 @@ function filterBulkList() {
     const f = document.getElementById('bulk-type-filter').value;
     document.querySelectorAll('.bulk-item').forEach(item => {
         const t = item.dataset.type, a = item.dataset.anime === 'true';
-        if (f === 'all') item.style.display = 'flex';
+        if      (f === 'all')   item.style.display = 'flex';
         else if (f === 'anime') item.style.display = a ? 'flex' : 'none';
-        else if (f === 'tv') item.style.display = (t === 'tv' && !a) ? 'flex' : 'none';
-        else if (f === 'movie') item.style.display = t === 'movie' ? 'flex' : 'none';
+        else if (f === 'tv')    item.style.display = (t==='tv'&&!a) ? 'flex' : 'none';
+        else if (f === 'movie') item.style.display = t==='movie' ? 'flex' : 'none';
     });
 }
 
@@ -2298,18 +2329,17 @@ function selectAllBulk() {
 }
 
 async function applyBulkAction() {
-    const action = document.getElementById('bulk-action').value;
+    const action  = document.getElementById('bulk-action').value;
     if (!action) return;
     const checked = document.querySelectorAll('.bulk-item input:checked');
     if (!checked.length) { alert('Select items first!'); return; }
-
     for (const cb of checked) {
         const docId = cb.value, itemType = cb.dataset.itemType;
-        const col = itemType === 'movie' ? 'movies' : 'series';
+        const col   = itemType === 'movie' ? 'movies' : 'series';
         try {
-            if (action.startsWith('anime-')) await updateDoc(doc(db, col, docId), { is_anime: action === 'anime-true' });
-            else if (action.startsWith('fav-')) await updateDoc(doc(db, col, docId), { is_favorite: action === 'fav-true' });
-            else await updateDoc(doc(db, col, docId), { user_status: action });
+            if (action.startsWith('anime-'))     await updateDoc(doc(db,col,docId),{is_anime:  action==='anime-true'});
+            else if (action.startsWith('fav-'))  await updateDoc(doc(db,col,docId),{is_favorite:action==='fav-true'});
+            else                                 await updateDoc(doc(db,col,docId),{user_status:action});
         } catch(e) {}
     }
     document.getElementById('bulk-modal').style.display = 'none';
@@ -2319,12 +2349,12 @@ async function applyBulkAction() {
 // ===== STATS =====
 function openStatsPage(section) {
     const modal = document.getElementById('stats-modal');
-    const body = document.getElementById('stats-modal-body');
+    const body  = document.getElementById('stats-modal-body');
     body.innerHTML = `
         <h2 style="margin-bottom:15px;color:var(--accent);">📊 Statistics</h2>
         <div class="stats-tabs">
-            <button class="stats-tab-btn ${section==='anime'?'active':''}" onclick="renderStats('anime')">🎌 Anime</button>
-            <button class="stats-tab-btn ${section==='tv'?'active':''}" onclick="renderStats('tv')">📺 TV</button>
+            <button class="stats-tab-btn ${section==='anime'?'active':''}"  onclick="renderStats('anime')">🎌 Anime</button>
+            <button class="stats-tab-btn ${section==='tv'?'active':''}"     onclick="renderStats('tv')">📺 TV</button>
             <button class="stats-tab-btn ${section==='movies'?'active':''}" onclick="renderStats('movies')">🎬 Movies</button>
         </div>
         <div id="stats-body"></div>
@@ -2336,83 +2366,230 @@ function openStatsPage(section) {
 function renderStats(section) {
     document.querySelectorAll('.stats-tab-btn').forEach(b => {
         b.classList.remove('active');
-        if ((section==='anime' && b.textContent.includes('Anime')) ||
-            (section==='tv' && b.textContent.includes('TV')) ||
-            (section==='movies' && b.textContent.includes('Movies'))) {
-            b.classList.add('active');
-        }
+        if ((section==='anime'  && b.textContent.includes('Anime'))  ||
+            (section==='tv'     && b.textContent.includes('TV'))     ||
+            (section==='movies' && b.textContent.includes('Movies'))) b.classList.add('active');
     });
 
     const container = document.getElementById('stats-body');
     if (!container) return;
     if (section === 'movies') { renderMovieStats(container); return; }
 
-    const items = section === 'anime' ? getAnime() : getTVShows();
-    const epMin = section === 'anime' ? 24 : 45;
+    const items  = section === 'anime' ? getAnime() : getTVShows();
+    const epMin  = section === 'anime' ? 24 : 45;
     let totalEps = 0;
-    const statusCounts = {}, monthCounts = {};
+    const statusCounts = {}, monthCounts = {}, dayOfWeekCounts = [0,0,0,0,0,0,0];
+    const hourCounts   = new Array(24).fill(0);
+    const bingeData    = {}; // date -> count
+    let longestStreak  = 0, currentStreak = 0, lastWatchDate = null;
+    const completionTimes = []; // days from added to finished
+    const showSpeeds   = []; // {title, daysToFinish, eps}
 
     items.forEach(item => {
-        statusCounts[item.user_status || 'Unknown'] = (statusCounts[item.user_status || 'Unknown'] || 0) + 1;
+        statusCounts[item.user_status||'Unknown'] = (statusCounts[item.user_status||'Unknown']||0)+1;
+
+        // Completion time
+        if (['Finished','Up to Date'].includes(item.user_status) && item.created_at) {
+            const lastWatched = getLastWatchedDate(item);
+            const days = Math.round((new Date(lastWatched) - new Date(item.created_at)) / 86400000);
+            if (days > 0) {
+                const aired = getAiredEpisodesOnly(item.seasons);
+                completionTimes.push({ title: item.title, days, eps: aired.length });
+                showSpeeds.push({ title: item.title, days, eps: aired.length });
+            }
+        }
+
         item.seasons?.forEach(s => {
             if (s.number === 0) return;
             s.episodes?.forEach(ep => {
-                if (ep.is_watched && !ep.is_special) {
-                    totalEps++;
-                    if (ep.watched_at) {
-                        const d = new Date(ep.watched_at);
-                        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-                        monthCounts[key] = (monthCounts[key] || 0) + 1;
-                    }
+                if (!ep.is_watched || ep.is_special) return;
+                totalEps++;
+                if (ep.watched_at) {
+                    const d   = new Date(ep.watched_at);
+                    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                    monthCounts[key] = (monthCounts[key]||0)+1;
+
+                    // Day of week (0=Sun)
+                    dayOfWeekCounts[d.getDay()]++;
+
+                    // Hour of day
+                    hourCounts[d.getHours()]++;
+
+                    // Binge data (eps per day)
+                    const dayKey = d.toISOString().split('T')[0];
+                    bingeData[dayKey] = (bingeData[dayKey]||0)+1;
                 }
             });
         });
     });
 
-    const finishedCount = (statusCounts['Finished'] || 0) + (statusCounts['Up to Date'] || 0);
+    // Streak calculation
+    const watchDays = Object.keys(bingeData).sort();
+    watchDays.forEach((day, i) => {
+        if (i === 0) { currentStreak = 1; }
+        else {
+            const prev = new Date(watchDays[i-1]);
+            const curr = new Date(day);
+            const diff = (curr - prev) / 86400000;
+            if (diff === 1) currentStreak++;
+            else currentStreak = 1;
+        }
+        if (currentStreak > longestStreak) longestStreak = currentStreak;
+    });
+
+    // Binge sessions: top 5 days
+    const topBingeDays = Object.entries(bingeData)
+        .sort((a,b) => b[1]-a[1])
+        .slice(0,5);
+
+    // Fastest completed shows
+    showSpeeds.sort((a,b) => {
+        const aRate = a.eps/Math.max(a.days,1);
+        const bRate = b.eps/Math.max(b.days,1);
+        return bRate - aRate;
+    });
+
+    const monthKeys   = Object.keys(monthCounts).sort();
+    const avgPerMonth = monthKeys.length ? Math.round(totalEps/monthKeys.length) : 0;
+    const avgPerWeek  = Math.round(avgPerMonth/4.3);
+
+    // Remaining & backlog estimate
     const remaining = items.reduce((sum, item) => {
-        const aired = getAiredEpisodesOnly(item.seasons);
-        return sum + aired.filter(ep => !ep.is_watched).length;
+        return sum + getAiredEpisodesOnly(item.seasons).filter(ep=>!ep.is_watched).length;
     }, 0);
 
-    const monthKeys = Object.keys(monthCounts).sort();
-    const avgPerMonth = monthKeys.length ? Math.round(totalEps / monthKeys.length) : 0;
-    const monthsToFinish = avgPerMonth > 0 ? Math.ceil(remaining / avgPerMonth) : '∞';
+    // Based on last 2 months of activity
+    const twoMonthsAgo = new Date(Date.now() - 60*24*60*60*1000);
+    let recentEps = 0;
+    items.forEach(item => {
+        item.seasons?.forEach(s => {
+            if (s.number===0) return;
+            s.episodes?.forEach(ep => {
+                if (ep.is_watched && ep.watched_at && !ep.is_special) {
+                    if (new Date(ep.watched_at) >= twoMonthsAgo) recentEps++;
+                }
+            });
+        });
+    });
+    const recentWeeks      = 8;
+    const recentPerWeek    = Math.round(recentEps / recentWeeks);
+    const weeksToFinish    = recentPerWeek > 0 ? Math.ceil(remaining / recentPerWeek) : null;
+    const finishDate       = weeksToFinish
+        ? new Date(Date.now() + weeksToFinish*7*24*60*60*1000).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})
+        : null;
+
+    const finishedCount = (statusCounts['Finished']||0)+(statusCounts['Up to Date']||0);
+    const totalStarted  = items.filter(i => i.user_status !== 'Planned').length;
+    const dropRate      = totalStarted > 0 ? Math.round(((statusCounts['Dropped']||0)/totalStarted)*100) : 0;
+    const completeRate  = totalStarted > 0 ? Math.round((finishedCount/totalStarted)*100) : 0;
+
+    // Peak watching time
+    const peakHour = hourCounts.indexOf(Math.max(...hourCounts));
+    const peakPeriod = peakHour < 6 ? 'Late Night 🌙'
+        : peakHour < 12 ? 'Morning ☀️'
+        : peakHour < 17 ? 'Afternoon 🌤'
+        : peakHour < 21 ? 'Evening 🌆'
+        : 'Night 🌃';
+
+    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const peakDay = days[dayOfWeekCounts.indexOf(Math.max(...dayOfWeekCounts))];
+    const weekendEps  = dayOfWeekCounts[0] + dayOfWeekCounts[6];
+    const weekdayEps  = dayOfWeekCounts.slice(1,6).reduce((a,b)=>a+b,0);
+    const watcherType = weekendEps > weekdayEps ? 'Weekend Watcher 📅' : 'Weekday Watcher 💼';
 
     container.innerHTML = `
+        <!-- OVERVIEW -->
         <div class="stats-card">
             <h4>📈 Overview</h4>
-            <div class="stats-row"><span class="stats-label">Total</span><span class="stats-value">${items.length}</span></div>
-            <div class="stats-row"><span class="stats-label">Episodes Watched</span><span class="stats-value">${totalEps}</span></div>
-            <div class="stats-row"><span class="stats-label">Watch Time</span><span class="stats-value">${formatWatchTime(totalEps*epMin)}</span></div>
+            <div class="stats-row"><span class="stats-label">Total Shows</span><span class="stats-value">${items.length}</span></div>
+            <div class="stats-row"><span class="stats-label">Episodes Watched</span><span class="stats-value">${totalEps.toLocaleString()}</span></div>
+            <div class="stats-row"><span class="stats-label">Total Watch Time</span><span class="stats-value">${formatWatchTime(totalEps*epMin)}</span></div>
             <div class="stats-row"><span class="stats-label">Completed</span><span class="stats-value">${finishedCount}</span></div>
             <div class="stats-row"><span class="stats-label">In Progress</span><span class="stats-value">${statusCounts['Watching']||0}</span></div>
-            <div class="stats-row"><span class="stats-label">Remaining Eps (aired)</span><span class="stats-value">${remaining}</span></div>
-            <div class="stats-row"><span class="stats-label">Remaining Time</span><span class="stats-value">${formatWatchTime(remaining*epMin)}</span></div>
-            <div class="stats-row"><span class="stats-label">Avg Eps/Month</span><span class="stats-value">${avgPerMonth}</span></div>
-            <div class="stats-row"><span class="stats-label">Avg Eps/Week</span><span class="stats-value">${Math.round(avgPerMonth/4.3)}</span></div>
-            <div class="stats-row"><span class="stats-label">Months to Finish</span><span class="stats-value">${monthsToFinish}</span></div>
+            <div class="stats-row"><span class="stats-label">Completion Rate</span><span class="stats-value">${completeRate}%</span></div>
+            <div class="stats-row"><span class="stats-label">Drop Rate</span><span class="stats-value">${dropRate}%</span></div>
         </div>
-        <div class="stats-chart-container"><h4>📊 Status Distribution</h4><canvas id="stats-status-chart"></canvas></div>
-        <div class="stats-chart-container"><h4>📅 Episodes/Month</h4><canvas id="stats-monthly-chart"></canvas></div>
+
+        <!-- WATCHING SPEED -->
+        <div class="stats-card">
+            <h4>⚡ Watching Speed</h4>
+            <div class="stats-row"><span class="stats-label">Avg Episodes/Month</span><span class="stats-value">${avgPerMonth}</span></div>
+            <div class="stats-row"><span class="stats-label">Avg Episodes/Week</span><span class="stats-value">${avgPerWeek}</span></div>
+            <div class="stats-row"><span class="stats-label">Recent (last 2 months)</span><span class="stats-value">${recentPerWeek}/week</span></div>
+            <div class="stats-row"><span class="stats-label">Longest Streak</span><span class="stats-value">${longestStreak} days</span></div>
+        </div>
+
+        <!-- BACKLOG -->
+        <div class="stats-card">
+            <h4>📋 Backlog</h4>
+            <div class="stats-row"><span class="stats-label">Remaining Episodes</span><span class="stats-value">${remaining.toLocaleString()}</span></div>
+            <div class="stats-row"><span class="stats-label">Remaining Time</span><span class="stats-value">${formatWatchTime(remaining*epMin)}</span></div>
+            <div class="stats-row"><span class="stats-label">At Current Pace</span><span class="stats-value">${recentPerWeek>0?`${weeksToFinish} weeks`:'∞'}</span></div>
+            <div class="stats-row"><span class="stats-label">Est. Catch-Up Date</span><span class="stats-value">${finishDate||'—'}</span></div>
+        </div>
+
+        <!-- WATCHING HABITS -->
+        <div class="stats-card">
+            <h4>🧠 Watching Habits</h4>
+            <div class="stats-row"><span class="stats-label">You Are A</span><span class="stats-value">${watcherType}</span></div>
+            <div class="stats-row"><span class="stats-label">Peak Watching Time</span><span class="stats-value">${peakPeriod}</span></div>
+            <div class="stats-row"><span class="stats-label">Most Active Day</span><span class="stats-value">${peakDay}</span></div>
+            <div class="stats-row"><span class="stats-label">Weekend Episodes</span><span class="stats-value">${weekendEps}</span></div>
+            <div class="stats-row"><span class="stats-label">Weekday Episodes</span><span class="stats-value">${weekdayEps}</span></div>
+        </div>
+
+        <!-- BIGGEST BINGES -->
+        ${topBingeDays.length ? `
+        <div class="stats-card">
+            <h4>🍿 Biggest Binge Days</h4>
+            ${topBingeDays.map(([date,count],i) => `
+                <div class="stats-row">
+                    <span class="stats-label">${i+1}. ${new Date(date).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'})}</span>
+                    <span class="stats-value">${count} eps · ${formatWatchTime(count*epMin)}</span>
+                </div>`).join('')}
+        </div>` : ''}
+
+        <!-- FASTEST COMPLETED -->
+        ${showSpeeds.length ? `
+        <div class="stats-card">
+            <h4>🏎 Fastest Completed Shows</h4>
+            ${showSpeeds.slice(0,5).map((s,i) => `
+                <div class="stats-row">
+                    <span class="stats-label">${i+1}. ${s.title}</span>
+                    <span class="stats-value">${s.eps} eps in ${s.days}d</span>
+                </div>`).join('')}
+        </div>` : ''}
+
+        <!-- CHARTS -->
+        <div class="stats-chart-container">
+            <h4>📊 Status Distribution</h4>
+            <canvas id="stats-status-chart"></canvas>
+        </div>
+        <div class="stats-chart-container">
+            <h4>📅 Episodes per Month</h4>
+            <canvas id="stats-monthly-chart"></canvas>
+        </div>
+        <div class="stats-chart-container">
+            <h4>📆 Episodes by Day of Week</h4>
+            <canvas id="stats-dow-chart"></canvas>
+        </div>
     `;
 
+    // Status doughnut
     const sc = document.getElementById('stats-status-chart');
     if (sc) {
-        const colorMap = {
-            'Watching':'#FFC107','Up to Date':'#4CAF50','Finished':'#2196F3',
-            'Dropped':'#f44336','Paused':'#FF9800','Planned':'#9E9E9E'
-        };
+        const colorMap = {'Watching':'#FFC107','Up to Date':'#4CAF50','Finished':'#2196F3','Dropped':'#f44336','Paused':'#FF9800','Planned':'#9E9E9E'};
         new Chart(sc.getContext('2d'), {
             type: 'doughnut',
             data: {
                 labels: Object.keys(statusCounts),
-                datasets: [{ data: Object.values(statusCounts), backgroundColor: Object.keys(statusCounts).map(s => colorMap[s] || '#666') }]
+                datasets: [{ data:Object.values(statusCounts), backgroundColor:Object.keys(statusCounts).map(s=>colorMap[s]||'#666') }]
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ font:{ size:11 } } } } }
         });
     }
 
+    // Monthly bar
     const mc = document.getElementById('stats-monthly-chart');
     if (mc && monthKeys.length) {
         const last12 = monthKeys.slice(-12);
@@ -2420,40 +2597,76 @@ function renderStats(section) {
         new Chart(mc.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: last12.map(k => { const [y,m] = k.split('-'); return `${months[parseInt(m)-1]} ${y.slice(2)}`; }),
-                datasets: [{ label: 'Episodes', data: last12.map(k => monthCounts[k]), backgroundColor: 'rgba(30,60,114,0.6)', borderColor: 'rgba(30,60,114,1)', borderWidth: 1 }]
+                labels: last12.map(k => { const [y,m]=k.split('-'); return `${months[parseInt(m)-1]} ${y.slice(2)}`; }),
+                datasets: [{ label:'Episodes', data:last12.map(k=>monthCounts[k]), backgroundColor:'rgba(30,60,114,0.6)', borderColor:'rgba(30,60,114,1)', borderWidth:1 }]
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+            options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
+        });
+    }
+
+    // Day of week bar
+    const dc = document.getElementById('stats-dow-chart');
+    if (dc) {
+        new Chart(dc.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],
+                datasets: [{ label:'Episodes', data:dayOfWeekCounts, backgroundColor:['#FF6384','#36A2EB','#FFCE56','#4BC0C0','#9966FF','#FF9F40','#FF6384'], borderWidth:1 }]
+            },
+            options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } }
         });
     }
 }
 
 function renderMovieStats(container) {
-    const movies = getMovies();
+    const movies  = getMovies();
     const watched = movies.filter(m => m.is_watched);
-    const rewatched = movies.reduce((s, m) => s + (m.rewatch_count || 0), 0);
-    const monthCounts = {};
+    const rewatched = movies.reduce((s,m)=>s+(m.rewatch_count||0),0);
+    const monthCounts={}, dayOfWeekCounts=[0,0,0,0,0,0,0];
+
     watched.forEach(m => {
         if (m.watched_at) {
             const d = new Date(m.watched_at);
             const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-            monthCounts[k] = (monthCounts[k] || 0) + 1;
+            monthCounts[k] = (monthCounts[k]||0)+1;
+            dayOfWeekCounts[d.getDay()]++;
         }
     });
-    const monthKeys = Object.keys(monthCounts).sort();
-    const avgPerMonth = monthKeys.length ? Math.round(watched.length / monthKeys.length) : 0;
+
+    const monthKeys    = Object.keys(monthCounts).sort();
+    const avgPerMonth  = monthKeys.length ? (watched.length/monthKeys.length).toFixed(1) : 0;
+    const days         = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const peakDay      = days[dayOfWeekCounts.indexOf(Math.max(...dayOfWeekCounts))];
+    const unwatched    = movies.length - watched.length;
+
+    // Recent pace (last 2 months)
+    const twoMonthsAgo = new Date(Date.now()-60*24*60*60*1000);
+    const recentWatched = watched.filter(m=>m.watched_at && new Date(m.watched_at)>=twoMonthsAgo).length;
+    const recentPerWeek = (recentWatched/8).toFixed(1);
+    const weeksToFinish = recentWatched>0 ? Math.ceil(unwatched/(recentWatched/8)) : null;
+    const finishDate    = weeksToFinish
+        ? new Date(Date.now()+weeksToFinish*7*24*60*60*1000).toLocaleDateString('en-US',{year:'numeric',month:'long'})
+        : null;
 
     container.innerHTML = `
         <div class="stats-card">
             <h4>📈 Overview</h4>
             <div class="stats-row"><span class="stats-label">Total</span><span class="stats-value">${movies.length}</span></div>
             <div class="stats-row"><span class="stats-label">Watched</span><span class="stats-value">${watched.length}</span></div>
-            <div class="stats-row"><span class="stats-label">Unwatched</span><span class="stats-value">${movies.length-watched.length}</span></div>
+            <div class="stats-row"><span class="stats-label">Unwatched</span><span class="stats-value">${unwatched}</span></div>
             <div class="stats-row"><span class="stats-label">Rewatched</span><span class="stats-value">${rewatched}</span></div>
-            <div class="stats-row"><span class="stats-label">Watch Time</span><span class="stats-value">${formatWatchTime(watched.length*100)}</span></div>
+            <div class="stats-row"><span class="stats-label">Total Watch Time</span><span class="stats-value">${formatWatchTime(watched.length*100)}</span></div>
             <div class="stats-row"><span class="stats-label">Avg/Month</span><span class="stats-value">${avgPerMonth}</span></div>
+            <div class="stats-row"><span class="stats-label">Most Active Day</span><span class="stats-value">${peakDay}</span></div>
         </div>
-        <div class="stats-chart-container"><h4>📅 Movies/Month</h4><canvas id="stats-monthly-chart"></canvas></div>
+        <div class="stats-card">
+            <h4>📋 Backlog</h4>
+            <div class="stats-row"><span class="stats-label">Unwatched Movies</span><span class="stats-value">${unwatched}</span></div>
+            <div class="stats-row"><span class="stats-label">Recent Pace</span><span class="stats-value">${recentPerWeek}/week</span></div>
+            <div class="stats-row"><span class="stats-label">Est. Catch-Up Date</span><span class="stats-value">${finishDate||'—'}</span></div>
+        </div>
+        <div class="stats-chart-container"><h4>📅 Movies per Month</h4><canvas id="stats-monthly-chart"></canvas></div>
+        <div class="stats-chart-container"><h4>📆 Movies by Day of Week</h4><canvas id="stats-dow-chart"></canvas></div>
     `;
 
     const mc = document.getElementById('stats-monthly-chart');
@@ -2461,59 +2674,63 @@ function renderMovieStats(container) {
         const last12 = monthKeys.slice(-12);
         const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
         new Chart(mc.getContext('2d'), {
-            type: 'bar',
-            data: {
-                labels: last12.map(k => { const [y,m] = k.split('-'); return `${months[parseInt(m)-1]} ${y.slice(2)}`; }),
-                datasets: [{ label: 'Movies', data: last12.map(k => monthCounts[k]), backgroundColor: 'rgba(156,39,176,0.6)', borderColor: 'rgba(156,39,176,1)', borderWidth: 1 }]
-            },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+            type:'bar',
+            data:{ labels:last12.map(k=>{const[y,m]=k.split('-');return`${months[parseInt(m)-1]} ${y.slice(2)}`;}), datasets:[{label:'Movies',data:last12.map(k=>monthCounts[k]),backgroundColor:'rgba(156,39,176,0.6)',borderColor:'rgba(156,39,176,1)',borderWidth:1}] },
+            options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}} }
+        });
+    }
+    const dc = document.getElementById('stats-dow-chart');
+    if (dc) {
+        new Chart(dc.getContext('2d'), {
+            type:'bar',
+            data:{ labels:['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], datasets:[{label:'Movies',data:dayOfWeekCounts,backgroundColor:'rgba(156,39,176,0.4)',borderColor:'rgba(156,39,176,1)',borderWidth:1}] },
+            options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}} }
         });
     }
 }
 
 // ===== EXPORTS =====
 async function exportData(format) {
-    const movies = getMovies(), tv = getTVShows(), anime = getAnime();
-    if (format === 'json') {
-        downloadFile('my-cinema-export.json', JSON.stringify({ movies, tv_shows: tv, anime, exported_at: new Date().toISOString() }, null, 2), 'application/json');
-    } else if (format === 'csv') {
-        let csv = 'Type,Title,Year,Status,Rating,Watched,Favorite\n';
-        movies.forEach(m => csv += `Movie,"${m.title}",${m.year||''},${m.is_watched?'Watched':'Unwatched'},${m.tmdb_rating||''},${m.is_watched?'Yes':'No'},${m.is_favorite?'Yes':'No'}\n`);
-        [...tv,...anime].forEach(s => csv += `${s.is_anime?'Anime':'TV'},"${s.title}",${s.year||''},${s.user_status||''},${s.tmdb_rating||''},-,${s.is_favorite?'Yes':'No'}\n`);
-        downloadFile('my-cinema-export.csv', csv, 'text/csv');
-    } else if (format === 'txt') {
-        let txt = `MY CINEMA TRACKER\n${new Date().toLocaleDateString()}\n\n=== ANIME (${anime.length}) ===\n`;
-        anime.forEach(s => txt += `[${s.user_status||'?'}] ${s.title} (${s.year||'?'})\n`);
-        txt += `\n=== TV (${tv.length}) ===\n`;
-        tv.forEach(s => txt += `[${s.user_status||'?'}] ${s.title} (${s.year||'?'})\n`);
-        txt += `\n=== MOVIES (${movies.length}) ===\n`;
-        movies.forEach(m => txt += `${m.is_watched?'✓':'○'} ${m.title} (${m.year||'?'})\n`);
-        downloadFile('my-cinema-export.txt', txt, 'text/plain');
+    const movies=getMovies(), tv=getTVShows(), anime=getAnime();
+    if (format==='json') {
+        downloadFile('my-cinema-export.json', JSON.stringify({movies,tv_shows:tv,anime,exported_at:new Date().toISOString()},null,2),'application/json');
+    } else if (format==='csv') {
+        let csv='Type,Title,Year,Status,Rating,Watched,Favorite\n';
+        movies.forEach(m=>csv+=`Movie,"${m.title}",${m.year||''},${m.is_watched?'Watched':'Unwatched'},${m.tmdb_rating||''},${m.is_watched?'Yes':'No'},${m.is_favorite?'Yes':'No'}\n`);
+        [...tv,...anime].forEach(s=>csv+=`${s.is_anime?'Anime':'TV'},"${s.title}",${s.year||''},${s.user_status||''},${s.tmdb_rating||''},-,${s.is_favorite?'Yes':'No'}\n`);
+        downloadFile('my-cinema-export.csv',csv,'text/csv');
+    } else if (format==='txt') {
+        let txt=`MY CINEMA TRACKER\n${new Date().toLocaleDateString()}\n\n=== ANIME (${anime.length}) ===\n`;
+        anime.forEach(s=>txt+=`[${s.user_status||'?'}] ${s.title} (${s.year||'?'})\n`);
+        txt+=`\n=== TV (${tv.length}) ===\n`;
+        tv.forEach(s=>txt+=`[${s.user_status||'?'}] ${s.title} (${s.year||'?'})\n`);
+        txt+=`\n=== MOVIES (${movies.length}) ===\n`;
+        movies.forEach(m=>txt+=`${m.is_watched?'✓':'○'} ${m.title} (${m.year||'?'})\n`);
+        downloadFile('my-cinema-export.txt',txt,'text/plain');
     }
 }
 
 async function exportPersonalList() {
-    const a = await showConfirm('Personal Export', 'What to export?', 'Anime', 'TV Shows', true);
+    const a = await showConfirm('Personal Export','What to export?','Anime','TV Shows',true);
     let items, label;
-    if (a === 'yes') { items = getAnime(); label = 'ANIME'; }
-    else if (a === 'no') { items = getTVShows(); label = 'TV SHOWS'; }
+    if      (a==='yes') { items=getAnime();    label='ANIME'; }
+    else if (a==='no')  { items=getTVShows();  label='TV SHOWS'; }
     else {
-        const b = await showConfirm('Export Movies?', 'Export movies list?', 'Yes', 'Cancel');
-        if (b !== 'yes') return;
-        items = getMovies(); label = 'MOVIES';
+        const b = await showConfirm('Export Movies?','Export movies list?','Yes','Cancel');
+        if (b!=='yes') return;
+        items=getMovies(); label='MOVIES';
     }
-    items.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-    let txt = `${label}\n${'='.repeat(label.length)}\n\n`;
-    items.forEach((item, i) => txt += `${i+1}. ${item.title} (${item.year || 'N/A'})\n`);
-    txt += `\nTotal: ${items.length}\n${new Date().toLocaleDateString()}`;
-    downloadFile(`my-${label.toLowerCase()}-list.txt`, txt, 'text/plain');
+    items.sort((a,b)=>(a.title||'').localeCompare(b.title||''));
+    let txt=`${label}\n${'='.repeat(label.length)}\n\n`;
+    items.forEach((item,i)=>txt+=`${i+1}. ${item.title} (${item.year||'N/A'})\n`);
+    txt+=`\nTotal: ${items.length}\n${new Date().toLocaleDateString()}`;
+    downloadFile(`my-${label.toLowerCase()}-list.txt`,txt,'text/plain');
 }
 
 function downloadFile(name, content, type) {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([content], { type }));
-    a.download = name;
-    a.click();
+    a.href = URL.createObjectURL(new Blob([content],{type}));
+    a.download = name; a.click();
 }
 
 // ===== IMPORT =====
@@ -2522,52 +2739,38 @@ async function importMovies() {
     const st = document.getElementById('import-status');
     try {
         const movies = JSON.parse(jsonText);
-        let imp = 0, fail = 0;
-        st.className = 'success';
-        st.textContent = `Importing... 0/${movies.length}`;
-
+        let imp=0, fail=0;
+        st.className='success'; st.textContent=`Importing... 0/${movies.length}`;
         for (const movie of movies) {
             try {
-                const docId = `movie_${movie.id.tvdb || movie.id.imdb}`;
-                let poster = 'https://via.placeholder.com/140x210?text=No+Image', tmdbId = null, tmdbRating = null;
-
+                const docId=`movie_${movie.id.tvdb||movie.id.imdb}`;
+                let poster=PLACEHOLDER_POSTER, tmdbId=null, tmdbRating=null;
                 if (movie.id.imdb) {
                     try {
-                        const d = await tmdbFetch(`${TMDB_BASE_URL}/find/${movie.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
-                        if (d.movie_results?.length) {
-                            tmdbId = d.movie_results[0].id;
-                            poster = d.movie_results[0].poster_path ? TMDB_IMG_BASE + d.movie_results[0].poster_path : poster;
-                            tmdbRating = d.movie_results[0].vote_average || null;
-                        }
+                        const d=await tmdbFetch(`${TMDB_BASE_URL}/find/${movie.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
+                        if (d.movie_results?.length) { tmdbId=d.movie_results[0].id; poster=d.movie_results[0].poster_path?TMDB_IMG_BASE+d.movie_results[0].poster_path:poster; tmdbRating=d.movie_results[0].vote_average||null; }
                     } catch(e) {}
                 }
-
                 if (!tmdbId && movie.title) {
                     try {
-                        const d = await tmdbFetch(`${TMDB_BASE_URL}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(movie.title)}&year=${movie.year}`);
-                        if (d.results?.length) {
-                            tmdbId = d.results[0].id;
-                            poster = d.results[0].poster_path ? TMDB_IMG_BASE + d.results[0].poster_path : poster;
-                            tmdbRating = d.results[0].vote_average || null;
-                        }
+                        const d=await tmdbFetch(`${TMDB_BASE_URL}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(movie.title)}&year=${movie.year}`);
+                        if (d.results?.length) { tmdbId=d.results[0].id; poster=d.results[0].poster_path?TMDB_IMG_BASE+d.results[0].poster_path:poster; tmdbRating=d.results[0].vote_average||null; }
                     } catch(e) {}
                 }
-
-                await setDoc(doc(db, 'movies', docId), {
-                    tmdb_id: tmdbId, imdb_id: movie.id.imdb, tvdb_id: movie.id.tvdb,
-                    title: movie.title, year: movie.year, poster, tmdb_rating: tmdbRating,
-                    is_watched: movie.is_watched || false, watched_at: movie.watched_at || null,
-                    is_favorite: movie.is_favorite || false, rewatch_count: movie.rewatch_count || 0,
-                    rewatch_history: [], created_at: movie.created_at || new Date().toISOString()
+                await setDoc(doc(db,'movies',docId),{
+                    tmdb_id:tmdbId, imdb_id:movie.id.imdb, tvdb_id:movie.id.tvdb,
+                    title:movie.title, year:movie.year, poster, tmdb_rating:tmdbRating,
+                    is_watched:movie.is_watched||false, watched_at:movie.watched_at||null,
+                    is_favorite:movie.is_favorite||false, rewatch_count:movie.rewatch_count||0,
+                    rewatch_history:[], created_at:movie.created_at||new Date().toISOString()
                 });
-                imp++;
-                st.textContent = `Importing... ${imp}/${movies.length} (${fail} failed)`;
-                if (imp % 30 === 0) await new Promise(r => setTimeout(r, 1000));
+                imp++; st.textContent=`Importing... ${imp}/${movies.length} (${fail} failed)`;
+                if (imp%30===0) await new Promise(r=>setTimeout(r,1000));
             } catch(e) { fail++; }
         }
-        st.textContent = `✓ ${imp} movies imported! (${fail} failed)`;
+        st.textContent=`✓ ${imp} movies imported! (${fail} failed)`;
         await loadMyList();
-    } catch(e) { st.className = 'error'; st.textContent = `✗ ${e.message}`; }
+    } catch(e) { st.className='error'; st.textContent=`✗ ${e.message}`; }
 }
 
 async function importSeries() {
@@ -2575,138 +2778,106 @@ async function importSeries() {
     const st = document.getElementById('import-status');
     try {
         const series = JSON.parse(jsonText);
-        let imp = 0, fail = 0;
-        st.className = 'success';
-        st.textContent = `Importing... 0/${series.length}`;
-
+        let imp=0, fail=0;
+        st.className='success'; st.textContent=`Importing... 0/${series.length}`;
         for (const show of series) {
             try {
-                const docId = `tv_${show.id.tvdb || show.id.imdb}`;
-                let poster = 'https://via.placeholder.com/140x210?text=No+Image',
-                    tmdbId = null, tmdbStatus = 'Unknown', tmdbRating = null, anime = false;
-
+                const docId=`tv_${show.id.tvdb||show.id.imdb}`;
+                let poster=PLACEHOLDER_POSTER, tmdbId=null, tmdbStatus='Unknown', tmdbRating=null, anime=false;
                 if (show.id.imdb) {
                     try {
-                        const d = await tmdbFetch(`${TMDB_BASE_URL}/find/${show.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
-                        if (d.tv_results?.length) {
-                            tmdbId = d.tv_results[0].id;
-                            poster = d.tv_results[0].poster_path ? TMDB_IMG_BASE + d.tv_results[0].poster_path : poster;
-                            tmdbRating = d.tv_results[0].vote_average || null;
-                        }
+                        const d=await tmdbFetch(`${TMDB_BASE_URL}/find/${show.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
+                        if (d.tv_results?.length) { tmdbId=d.tv_results[0].id; poster=d.tv_results[0].poster_path?TMDB_IMG_BASE+d.tv_results[0].poster_path:poster; tmdbRating=d.tv_results[0].vote_average||null; }
                     } catch(e) {}
                 }
-
                 if (!tmdbId && show.title) {
                     try {
-                        const clean = show.title.replace(/\s*\(\d{4}\)\s*$/, '');
-                        const d = await tmdbFetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(clean)}`);
-                        if (d.results?.length) {
-                            tmdbId = d.results[0].id;
-                            poster = d.results[0].poster_path ? TMDB_IMG_BASE + d.results[0].poster_path : poster;
-                            tmdbRating = d.results[0].vote_average || null;
-                        }
+                        const clean=show.title.replace(/\s*\(\d{4}\)\s*$/,'');
+                        const d=await tmdbFetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(clean)}`);
+                        if (d.results?.length) { tmdbId=d.results[0].id; poster=d.results[0].poster_path?TMDB_IMG_BASE+d.results[0].poster_path:poster; tmdbRating=d.results[0].vote_average||null; }
                     } catch(e) {}
                 }
-
                 if (tmdbId) {
                     try {
-                        const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
-                        tmdbStatus = det.status || 'Unknown';
-                        anime = isAnimeShow(det);
-                        if (!tmdbRating) tmdbRating = det.vote_average || null;
+                        const det=await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
+                        tmdbStatus=det.status||'Unknown'; anime=isAnimeShow(det);
+                        if (!tmdbRating) tmdbRating=det.vote_average||null;
                     } catch(e) {}
                 }
-
-                const statusMap = {
-                    'up_to_date': 'Up to Date', 'watching': 'Watching', 'watched': 'Finished',
-                    'dropped': 'Dropped', 'on_hold': 'Paused', 'plan_to_watch': 'Planned'
-                };
-
-                const seasons = show.seasons?.map(s => ({
-                    number: s.number,
-                    is_specials: s.number === 0,
-                    episodes: (s.episodes || []).map(ep => ({
-                        number: ep.number,
-                        name: ep.name || `Episode ${ep.number}`,
-                        air_date: ep.air_date || null,
-                        is_watched: ep.is_watched || false,
-                        watched_at: ep.watched_at || null,
-                        rewatch_count: ep.rewatch_count || 0,
-                        rewatch_history: [],
-                        is_special: s.number === 0
+                const statusMap={'up_to_date':'Up to Date','watching':'Watching','watched':'Finished','dropped':'Dropped','on_hold':'Paused','plan_to_watch':'Planned'};
+                const seasons=(show.seasons||[]).map(s=>({
+                    number:s.number, is_specials:s.number===0,
+                    episodes:(s.episodes||[]).map(ep=>({
+                        number:ep.number, name:ep.name||`Episode ${ep.number}`,
+                        air_date:ep.air_date||null,
+                        is_watched:ep.is_watched||false, watched_at:ep.watched_at||null,
+                        rewatch_count:ep.rewatch_count||0, rewatch_history:[],
+                        is_special:s.number===0
                     }))
-                })) || [];
-
-                await setDoc(doc(db, 'series', docId), {
-                    tmdb_id: tmdbId, imdb_id: show.id.imdb, tvdb_id: show.id.tvdb,
-                    title: show.title, year: show.year || null, poster, tmdb_rating: tmdbRating,
-                    user_status: statusMap[show.status] || 'Watching',
-                    tmdb_status: tmdbStatus,
-                    last_status_check: new Date().toISOString(),
-                    last_synced: new Date().toISOString(),
-                    is_favorite: show.is_favorite || false,
-                    is_anime: anime, seasons,
-                    created_at: show.created_at || new Date().toISOString()
+                }));
+                await setDoc(doc(db,'series',docId),{
+                    tmdb_id:tmdbId, imdb_id:show.id.imdb, tvdb_id:show.id.tvdb,
+                    title:show.title, year:show.year||null, poster, tmdb_rating:tmdbRating,
+                    user_status:statusMap[show.status]||'Watching',
+                    tmdb_status:tmdbStatus, last_status_check:new Date().toISOString(),
+                    last_synced:new Date().toISOString(),
+                    is_favorite:show.is_favorite||false, is_anime:anime, seasons,
+                    created_at:show.created_at||new Date().toISOString()
                 });
-
-                imp++;
-                st.textContent = `Importing... ${imp}/${series.length} (${fail} failed)`;
-                if (imp % 20 === 0) await new Promise(r => setTimeout(r, 1500));
-            } catch(e) { fail++; console.error('Failed:', show.title, e); }
+                imp++; st.textContent=`Importing... ${imp}/${series.length} (${fail} failed)`;
+                if (imp%20===0) await new Promise(r=>setTimeout(r,1500));
+            } catch(e) { fail++; console.error('Failed:',show.title,e); }
         }
-        st.textContent = `✓ ${imp} shows imported! (${fail} failed)`;
+        st.textContent=`✓ ${imp} shows imported! (${fail} failed)`;
         await loadMyList();
-    } catch(e) { st.className = 'error'; st.textContent = `✗ ${e.message}`; }
+    } catch(e) { st.className='error'; st.textContent=`✗ ${e.message}`; }
 }
 
 // ===== CLOSE MODALS =====
 window.addEventListener('click', (e) => {
-    if (e.target === document.getElementById('modal')) document.getElementById('modal').style.display = 'none';
-    if (e.target === document.getElementById('episode-modal')) document.getElementById('episode-modal').style.display = 'none';
-    if (e.target === document.getElementById('preview-modal')) document.getElementById('preview-modal').style.display = 'none';
-    if (e.target === document.getElementById('confirm-dialog')) document.getElementById('confirm-dialog').style.display = 'none';
-    if (e.target === document.getElementById('stats-modal')) document.getElementById('stats-modal').style.display = 'none';
-    if (e.target === document.getElementById('bulk-modal')) document.getElementById('bulk-modal').style.display = 'none';
-    if (e.target === document.getElementById('tag-specials-modal')) document.getElementById('tag-specials-modal').style.display = 'none';
-    if (!e.target.closest('.show-options')) document.querySelectorAll('.options-menu').forEach(m => m.classList.remove('show'));
+    ['modal','episode-modal','preview-modal','confirm-dialog','stats-modal','bulk-modal','tag-specials-modal'].forEach(id => {
+        if (e.target === document.getElementById(id)) document.getElementById(id).style.display='none';
+    });
+    if (!e.target.closest('.show-options')) document.querySelectorAll('.options-menu').forEach(m=>m.classList.remove('show'));
 });
 
-document.querySelector('#modal .close').addEventListener('click', () => { document.getElementById('modal').style.display = 'none'; });
+document.querySelector('#modal .close').addEventListener('click', ()=>{ document.getElementById('modal').style.display='none'; });
 document.getElementById('import-movies-btn').addEventListener('click', importMovies);
 document.getElementById('import-series-btn').addEventListener('click', importSeries);
 
-// ===== GLOBAL =====
-window.openDetails = openDetails;
-window.openPreview = openPreview;
-window.openEpisodeDetail = openEpisodeDetail;
-window.addToList = addToList;
-window.removeFromList = removeFromList;
+// ===== GLOBAL EXPORTS =====
+window.openDetails          = openDetails;
+window.openPreview          = openPreview;
+window.openEpisodeDetail    = openEpisodeDetail;
+window.addToList            = addToList;
+window.removeFromList       = removeFromList;
 window.removeFromListByTMDB = removeFromListByTMDB;
-window.toggleEpisode = toggleEpisode;
-window.toggleFavorite = toggleFavorite;
-window.toggleWatched = toggleWatched;
-window.markSeasonWatched = markSeasonWatched;
-window.quickMarkWatched = quickMarkWatched;
-window.setUserStatus = setUserStatus;
-window.toggleAnimeStatus = toggleAnimeStatus;
-window.toggleOptionsMenu = toggleOptionsMenu;
-window.toggleSeason = toggleSeason;
-window.switchDetailTab = switchDetailTab;
-window.switchSection = switchSection;
-window.switchSubTab = switchSubTab;
-window.renderLibrary = renderLibrary;
-window.loadSectionCalendar = loadSectionCalendar;
-window.exportData = exportData;
-window.exportPersonalList = exportPersonalList;
-window.handlePreviewAdd = handlePreviewAdd;
-window.openStatsPage = openStatsPage;
-window.renderStats = renderStats;
-window.rescanAnime = rescanAnime;
-window.autoTagStatuses = autoTagStatuses;
-window.openBulkTagger = openBulkTagger;
-window.filterBulkList = filterBulkList;
-window.selectAllBulk = selectAllBulk;
-window.applyBulkAction = applyBulkAction;
+window.toggleEpisode        = toggleEpisode;
+window.toggleFavorite       = toggleFavorite;
+window.toggleWatched        = toggleWatched;
+window.markSeasonWatched    = markSeasonWatched;
+window.quickMarkWatched     = quickMarkWatched;
+window.setUserStatus        = setUserStatus;
+window.toggleAnimeStatus    = toggleAnimeStatus;
+window.toggleOptionsMenu    = toggleOptionsMenu;
+window.toggleSeason         = toggleSeason;
+window.switchDetailTab      = switchDetailTab;
+window.switchSection        = switchSection;
+window.switchSubTab         = switchSubTab;
+window.renderLibrary        = renderLibrary;
+window.loadSectionCalendar  = loadSectionCalendar;
+window.exportData           = exportData;
+window.exportPersonalList   = exportPersonalList;
+window.handlePreviewAdd     = handlePreviewAdd;
+window.openStatsPage        = openStatsPage;
+window.renderStats          = renderStats;
+window.rescanAnime          = rescanAnime;
+window.autoTagStatuses      = autoTagStatuses;
+window.openBulkTagger       = openBulkTagger;
+window.filterBulkList       = filterBulkList;
+window.selectAllBulk        = selectAllBulk;
+window.applyBulkAction      = applyBulkAction;
 window.openTagSpecialsModal = openTagSpecialsModal;
-window.applySpecialTags = applySpecialTags;
-window.syncAllAiringShows = syncAllAiringShows;
+window.applySpecialTags     = applySpecialTags;
+window.filterTagSpecials    = filterTagSpecials;
+window.syncAllAiringShows   = syncAllAiringShows;
