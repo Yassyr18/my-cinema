@@ -264,23 +264,32 @@
                 <button class="settings-action-btn" onclick="openBulkTagger()">📋 Bulk Tag Shows</button>
                 <button class="settings-action-btn" onclick="syncAllAiringShows(false)">🔄 Sync Episodes (All Airing Shows)</button>
                 <button class="settings-action-btn" onclick="enrichLibrary()">✨ Enrich Library (Genres, Languages, Networks)</button>
+                <button class="settings-action-btn" onclick="openRateShowsModal()">⭐ Rate Your Shows</button>
                 <div id="settings-action-status" style="margin-top:10px;"></div>
             </div>
 
-            <div class="settings-group">
-                <h3>Import Data</h3>
-                <div class="import-box">
-                    <h4>Import Movies</h4>
-                    <textarea id="movies-json" placeholder="Paste movies JSON..."></textarea>
-                    <button id="import-movies-btn">Import Movies</button>
-                </div>
-                <div class="import-box">
-                    <h4>Import TV Shows & Anime</h4>
-                    <textarea id="series-json" placeholder="Paste series JSON..."></textarea>
-                    <button id="import-series-btn">Import TV Shows</button>
-                </div>
-                <div id="import-status"></div>
-            </div>
+            <div class="settings-group" id="import-group">
+    <h3>
+        <button id="import-toggle"
+                style="background:none;border:none;color:var(--accent);font-size:15px;
+                       font-weight:700;cursor:pointer;padding:0;text-align:left;width:100%;">
+            ▶ Import Data
+        </button>
+    </h3>
+    <div id="import-content">
+        <div class="import-box">
+            <h4>Import Movies</h4>
+            <textarea id="movies-json" placeholder="Paste movies JSON..."></textarea>
+            <button id="import-movies-btn">Import Movies</button>
+        </div>
+        <div class="import-box">
+            <h4>Import TV Shows &amp; Anime</h4>
+            <textarea id="series-json" placeholder="Paste series JSON..."></textarea>
+            <button id="import-series-btn">Import TV Shows</button>
+        </div>
+        <div id="import-status"></div>
+    </div>
+</div>
 
             <div class="settings-group">
                 <h3>Export Data</h3>
@@ -289,7 +298,7 @@
                     <button class="export-btn" onclick="exportData('json')">📄 JSON</button>
                     <button class="export-btn" onclick="exportData('csv')">📊 CSV</button>
                     <button class="export-btn" onclick="exportData('txt')">📝 TXT</button>
-                    <button class="export-btn" onclick="exportPersonalList()">📃 Personal List</button>
+                    <button class="export-btn" onclick="openPersonalListModal()">📃 Personal List</button>
                 </div>
             </div>
 
