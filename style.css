@@ -857,6 +857,109 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
 .bulk-actions select { border: 2px solid var(--border); background: var(--surface); color: var(--text); }
 .bulk-actions button { background: var(--accent); color: white; border: none; font-weight: 600; }
 
+/* ===== RATE SHOWS MODAL ===== */
+.rate-show-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.rate-show-item img {
+    width: 36px;
+    height: 54px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.rate-show-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.rate-show-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rate-show-meta {
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 2px;
+}
+
+.rate-show-buttons {
+    display: flex;
+    gap: 3px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 160px;
+}
+
+.rate-num-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+    border: 2px solid var(--border);
+    background: transparent;
+    color: var(--text2);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+    padding: 0;
+    line-height: 1;
+}
+
+.rate-num-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+}
+
+.rate-num-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.rate-num-btn.active:hover {
+    background: var(--accent2);
+    color: white;
+}
+
+.rate-clear-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+    border: 2px solid var(--border);
+    background: transparent;
+    color: var(--text3);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+
+.rate-clear-btn:hover {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+/* ===== SIMILAR MATCH SCORE ===== */
+.similar-match {
+    font-size: 10px;
+    color: var(--green);
+    font-weight: 700;
+    margin-top: 2px;
+}
+
 /* ===== STATS MODAL ===== */
 .stats-tabs {
     display: flex;
