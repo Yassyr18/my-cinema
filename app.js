@@ -233,7 +233,11 @@ function generateIncrementalTimestamps(count, isAnime) {
 // ===== ENRICH LIBRARY =====
 async function enrichLibrary() {
     const statusEl = document.getElementById('settings-action-status');
-    const needsEnrichment = myList.filter(i => !i.genres || i.genres.length === 0);
+
+    // Find items missing enrichment data OR missing year
+    const needsEnrichment = myList.filter(i =>
+        !i.genres || i.genres.length === 0 || !i.year
+    );
 
     if (needsEnrichment.length === 0) {
         statusEl.innerHTML = `<p style="color:var(--green);">✓ All shows up to date! (0 new)</p>`;
@@ -247,33 +251,52 @@ async function enrichLibrary() {
         if (!item.tmdb_id) { failed++; continue; }
         try {
             statusEl.innerHTML = `<p style="color:var(--accent);">Enriching ${done+1}/${needsEnrichment.length}: ${item.title}</p>`;
+
             const endpoint = item.type === 'movie' ? 'movie' : 'tv';
             const det = await tmdbFetch(`${TMDB_BASE_URL}/${endpoint}/${item.tmdb_id}?api_key=${TMDB_API_KEY}`);
 
-            const enrichData = {
-                genres:            (det.genres||[]).map(g => g.name),
-                original_language: det.original_language || null,
-                origin_country:    (det.origin_country || det.production_countries?.map(c=>c.iso_3166_1) || []),
-                popularity:        det.popularity || null,
-                tmdb_rating:       det.vote_average || item.tmdb_rating || null
-            };
+            const enrichData = {};
 
-            if (item.type === 'tv') {
-                enrichData.networks = (det.networks||[]).map(n => n.name);
-            } else {
-                enrichData.networks = (det.production_companies||[]).map(n => n.name);
+            // Fill genres if missing
+            if (!item.genres || item.genres.length === 0) {
+                enrichData.genres            = (det.genres||[]).map(g => g.name);
+                enrichData.original_language = det.original_language || null;
+                enrichData.origin_country    = (det.origin_country || det.production_countries?.map(c=>c.iso_3166_1) || []);
+                enrichData.popularity        = det.popularity || null;
+                enrichData.tmdb_rating       = det.vote_average || item.tmdb_rating || null;
+
+                if (item.type === 'tv') {
+                    enrichData.networks = (det.networks||[]).map(n => n.name);
+                } else {
+                    enrichData.networks = (det.production_companies||[]).map(n => n.name);
+                }
             }
 
-            const col = item.type === 'movie' ? 'movies' : 'series';
-            await updateDoc(doc(db, col, item.docId), enrichData);
-            Object.assign(item, enrichData);
+            // Fill year if missing
+            if (!item.year) {
+                if (item.type === 'tv') {
+                    const airDate = det.first_air_date;
+                    if (airDate) enrichData.year = parseInt(airDate.substring(0, 4));
+                } else {
+                    const relDate = det.release_date;
+                    if (relDate) enrichData.year = parseInt(relDate.substring(0, 4));
+                }
+            }
+
+            // Only update if we have something to update
+            if (Object.keys(enrichData).length > 0) {
+                const col = item.type === 'movie' ? 'movies' : 'series';
+                await updateDoc(doc(db, col, item.docId), enrichData);
+                Object.assign(item, enrichData);
+            }
+
             done++;
             await new Promise(r => setTimeout(r, 250));
         } catch(e) { failed++; }
     }
 
     saveTmdbCache();
-    statusEl.innerHTML = `<p style="color:var(--green);">✓ Done! ${done} enriched${failed>0?`, ${failed} failed`:''}.</p>`;
+    statusEl.innerHTML = `<p style="color:var(--green);">✓ Done! ${done} enriched${failed > 0 ? `, ${failed} failed` : ''}.</p>`;
     await loadMyList();
 }
 
