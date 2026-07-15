@@ -1647,23 +1647,32 @@ function buildEpisodeHTML(ep, seasonNum, safeDocId) {
     const today     = new Date(); today.setHours(23,59,59,999);
     const airDate   = ep.air_date ? new Date(ep.air_date) : null;
     const isUnaired = airDate && airDate > today;
+    const onclickStr = isUnaired
+        ? ''
+        : `openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number},false)`;
 
     return `
-        <div class="episode ${ep.is_watched?'watched':''}"
-             onclick="${isUnaired?'':``openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number},false)``}"
-             style="${isUnaired?'opacity:0.5;cursor:default;':''}">
+        <div class="episode ${ep.is_watched ? 'watched' : ''}"
+             onclick="${onclickStr}"
+             style="${isUnaired ? 'opacity:0.5;cursor:default;' : ''}">
             <div class="episode-info">
                 <span class="episode-number">E${String(ep.number).padStart(2,'0')}</span>
-                - ${ep.name||'Episode '+ep.number}
-                ${isUnaired?`<br><small style="color:var(--text3);">📅 Airs ${new Date(ep.air_date).toLocaleDateString()}</small>`:''}
-                ${ep.watched_at&&!isUnaired?`<br><small style="color:var(--text3);">${new Date(ep.watched_at).toLocaleDateString()}</small>`:''}
-                ${ep.rewatch_count>0?`<br><small style="color:#2196F3;">↺ ${ep.rewatch_count}x</small>`:''}
+                - ${ep.name || 'Episode ' + ep.number}
+                ${isUnaired
+                    ? '<br><small style="color:var(--text3);">📅 Airs ' + new Date(ep.air_date).toLocaleDateString() + '</small>'
+                    : ''}
+                ${ep.watched_at && !isUnaired
+                    ? '<br><small style="color:var(--text3);">' + new Date(ep.watched_at).toLocaleDateString() + '</small>'
+                    : ''}
+                ${ep.rewatch_count > 0
+                    ? '<br><small style="color:#2196F3;">↺ ' + ep.rewatch_count + 'x</small>'
+                    : ''}
             </div>
-            ${!isUnaired?`
-                <button class="watch-btn ${ep.is_watched?'watched':'mark-watched'}"
+            ${!isUnaired ? `
+                <button class="watch-btn ${ep.is_watched ? 'watched' : 'mark-watched'}"
                         onclick="event.stopPropagation();toggleEpisode('${safeDocId}',${seasonNum},${ep.number},false)">
-                    ${ep.is_watched?'✓':'○'}
-                </button>`:`<div style="width:40px;"></div>`}
+                    ${ep.is_watched ? '✓' : '○'}
+                </button>` : '<div style="width:40px;"></div>'}
         </div>
     `;
 }
