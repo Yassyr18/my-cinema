@@ -246,8 +246,12 @@ body.modal-open {
 /* ===== SECTION JUMP PILLS ===== */
 .section-jump-pills {
     display: flex; gap: 6px; overflow-x: auto;
-    padding: 0 0 10px 0; margin-bottom: 6px;
+    padding: 8px 0; margin-bottom: 6px;
     scrollbar-width: none; -ms-overflow-style: none;
+    position: sticky;
+    top: calc(var(--top-bar-height) + var(--safe-top) + 44px);
+    z-index: 800;
+    background: var(--bg);
 }
 .section-jump-pills::-webkit-scrollbar { display: none; }
 
