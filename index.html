@@ -2,10 +2,11 @@
 <html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>My Cinema Tracker</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1e3c72">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="My Cinema">
@@ -90,6 +91,7 @@
                             <option value="Watching">Watching</option>
                             <option value="Up to Date">Up to Date</option>
                             <option value="Finished">Finished</option>
+                            <option value="Rewatching">Rewatching</option>
                             <option value="Paused">Paused</option>
                             <option value="Dropped">Dropped</option>
                             <option value="Planned">Planned</option>
@@ -138,6 +140,7 @@
                             <option value="Watching">Watching</option>
                             <option value="Up to Date">Up to Date</option>
                             <option value="Finished">Finished</option>
+                            <option value="Rewatching">Rewatching</option>
                             <option value="Paused">Paused</option>
                             <option value="Dropped">Dropped</option>
                             <option value="Planned">Planned</option>
@@ -190,7 +193,6 @@
                 <h2 class="profile-name">My Cinema</h2>
             </div>
 
-            <!-- Summary Blocks -->
             <div class="profile-blocks">
                 <div class="profile-block anime-block" onclick="openStatsPage('anime')">
                     <div class="profile-block-header">
@@ -269,27 +271,27 @@
             </div>
 
             <div class="settings-group" id="import-group">
-    <h3>
-        <button id="import-toggle"
-                style="background:none;border:none;color:var(--accent);font-size:15px;
-                       font-weight:700;cursor:pointer;padding:0;text-align:left;width:100%;">
-            ▶ Import Data
-        </button>
-    </h3>
-    <div id="import-content">
-        <div class="import-box">
-            <h4>Import Movies</h4>
-            <textarea id="movies-json" placeholder="Paste movies JSON..."></textarea>
-            <button id="import-movies-btn">Import Movies</button>
-        </div>
-        <div class="import-box">
-            <h4>Import TV Shows &amp; Anime</h4>
-            <textarea id="series-json" placeholder="Paste series JSON..."></textarea>
-            <button id="import-series-btn">Import TV Shows</button>
-        </div>
-        <div id="import-status"></div>
-    </div>
-</div>
+                <h3>
+                    <button id="import-toggle"
+                            style="background:none;border:none;color:var(--accent);font-size:15px;
+                                   font-weight:700;cursor:pointer;padding:0;text-align:left;width:100%;">
+                        ▶ Import Data
+                    </button>
+                </h3>
+                <div id="import-content">
+                    <div class="import-box">
+                        <h4>Import Movies</h4>
+                        <textarea id="movies-json" placeholder="Paste movies JSON..."></textarea>
+                        <button id="import-movies-btn">Import Movies</button>
+                    </div>
+                    <div class="import-box">
+                        <h4>Import TV Shows &amp; Anime</h4>
+                        <textarea id="series-json" placeholder="Paste series JSON..."></textarea>
+                        <button id="import-series-btn">Import TV Shows</button>
+                    </div>
+                    <div id="import-status"></div>
+                </div>
+            </div>
 
             <div class="settings-group">
                 <h3>Export Data</h3>
@@ -304,7 +306,7 @@
 
             <div class="settings-group">
                 <h3>About</h3>
-                <p style="color:var(--text2); font-size:13px;">My Cinema Tracker v4.0</p>
+                <p style="color:var(--text2); font-size:13px;">My Cinema Tracker v5.0</p>
                 <p style="color:var(--text2); font-size:13px;">Built with TMDB & Firebase</p>
             </div>
         </div>
@@ -377,13 +379,14 @@
 
     <!-- Confirmation Dialog -->
     <div id="confirm-dialog" class="modal" style="display:none;">
-        <div class="modal-content" style="max-width:400px; text-align:center;">
+        <div class="modal-content" style="max-width:400px; text-align:center; position:relative;">
+            <button class="confirm-close" onclick="document.getElementById('confirm-dialog').style.display='none'">✕</button>
             <h3 id="confirm-title" style="margin-bottom:15px;"></h3>
             <p id="confirm-message" style="margin-bottom:20px; color:var(--text2);"></p>
             <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
                 <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
                 <button id="confirm-no" class="confirm-btn confirm-no">No</button>
-                <button id="confirm-cancel" class="confirm-btn" style="display:none;">Cancel</button>
+                <button id="confirm-cancel" class="confirm-btn confirm-cancel-btn" style="display:none;">Cancel</button>
             </div>
         </div>
     </div>
