@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark" data-accent="blue" data-card-style="normal" data-poster-size="medium" data-font-size="normal">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -27,8 +27,9 @@
             <span class="app-logo">🎬</span>
             <div class="top-search-wrap">
                 <input type="text" id="search-input" placeholder="Search movies, shows, anime...">
-                <button id="search-btn">🔍</button>
             </div>
+            <button id="search-btn" class="top-bar-btn">🔍</button>
+            <button id="refresh-btn-top" class="top-bar-btn" onclick="refreshApp()">🔄</button>
         </div>
     </div>
 
@@ -64,6 +65,7 @@
 
             <div class="swipeable-tabs" id="anime-swipeable">
                 <div class="sub-tab-content active" id="anime-continue">
+                    <div id="anime-jump-pills"></div>
                     <div id="anime-continue-list"></div>
                 </div>
                 <div class="sub-tab-content" id="anime-history">
@@ -113,6 +115,7 @@
 
             <div class="swipeable-tabs" id="tv-swipeable">
                 <div class="sub-tab-content active" id="tv-continue">
+                    <div id="tv-jump-pills"></div>
                     <div id="tv-continue-list"></div>
                 </div>
                 <div class="sub-tab-content" id="tv-history">
@@ -248,66 +251,148 @@
         <div class="section-page" id="page-settings">
             <h2 class="settings-title">⚙️ Settings</h2>
 
+            <!-- APPEARANCE -->
             <div class="settings-group">
-                <h3>Appearance</h3>
-                <div class="settings-row">
-                    <span>Dark Mode</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="dark-mode-toggle">
-                        <span class="toggle-slider"></span>
-                    </label>
+                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                    <h3>📱 Appearance</h3>
+                    <span class="settings-arrow">▼</span>
                 </div>
-            </div>
-
-            <div class="settings-group">
-                <h3>Library Management</h3>
-                <button class="settings-action-btn" onclick="rescanAnime()">🎌 Re-scan Anime Tags</button>
-                <button class="settings-action-btn" onclick="autoTagStatuses()">🏷️ Auto-tag Statuses</button>
-                <button class="settings-action-btn" onclick="openBulkTagger()">📋 Bulk Tag Shows</button>
-                <button class="settings-action-btn" onclick="syncAllAiringShows(false)">🔄 Sync Episodes (All Airing Shows)</button>
-                <button class="settings-action-btn" onclick="enrichLibrary()">✨ Enrich Library (Genres, Languages, Networks)</button>
-                <button class="settings-action-btn" onclick="openRateShowsModal()">⭐ Rate Your Shows</button>
-                <div id="settings-action-status" style="margin-top:10px;"></div>
-            </div>
-
-            <div class="settings-group" id="import-group">
-                <h3>
-                    <button id="import-toggle"
-                            style="background:none;border:none;color:var(--accent);font-size:15px;
-                                   font-weight:700;cursor:pointer;padding:0;text-align:left;width:100%;">
-                        ▶ Import Data
-                    </button>
-                </h3>
-                <div id="import-content">
-                    <div class="import-box">
-                        <h4>Import Movies</h4>
-                        <textarea id="movies-json" placeholder="Paste movies JSON..."></textarea>
-                        <button id="import-movies-btn">Import Movies</button>
+                <div class="settings-group-content">
+                    <div class="settings-row">
+                        <div>
+                            <div class="settings-row-label">Dark Mode</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="dark-mode-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
                     </div>
-                    <div class="import-box">
-                        <h4>Import TV Shows &amp; Anime</h4>
-                        <textarea id="series-json" placeholder="Paste series JSON..."></textarea>
-                        <button id="import-series-btn">Import TV Shows</button>
+
+                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                        <div class="settings-row-label">Accent Color</div>
+                        <div class="color-presets" id="accent-color-presets">
+                            <div class="color-preset" data-color="blue"   style="background:#1e3c72;" onclick="setAccentColor('blue')"></div>
+                            <div class="color-preset" data-color="purple" style="background:#7B1FA2;" onclick="setAccentColor('purple')"></div>
+                            <div class="color-preset" data-color="green"  style="background:#2E7D32;" onclick="setAccentColor('green')"></div>
+                            <div class="color-preset" data-color="red"    style="background:#C62828;" onclick="setAccentColor('red')"></div>
+                            <div class="color-preset" data-color="orange" style="background:#E65100;" onclick="setAccentColor('orange')"></div>
+                            <div class="color-preset" data-color="dark"   style="background:#37474F;" onclick="setAccentColor('dark')"></div>
+                        </div>
                     </div>
-                    <div id="import-status"></div>
+
+                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                        <div class="settings-row-label">Rewatch Bar Color</div>
+                        <div class="color-presets" id="rewatch-color-presets">
+                            <div class="color-preset" data-color="#FFC107" style="background:#FFC107;" onclick="setRewatchColor('#FFC107')"></div>
+                            <div class="color-preset" data-color="#2196F3" style="background:#2196F3;" onclick="setRewatchColor('#2196F3')"></div>
+                            <div class="color-preset" data-color="#9C27B0" style="background:#9C27B0;" onclick="setRewatchColor('#9C27B0')"></div>
+                            <div class="color-preset" data-color="#4CAF50" style="background:#4CAF50;" onclick="setRewatchColor('#4CAF50')"></div>
+                            <div class="color-preset" data-color="#FF9800" style="background:#FF9800;" onclick="setRewatchColor('#FF9800')"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                        <div class="settings-row-label">Card Style</div>
+                        <div class="segmented-control" id="card-style-control">
+                            <button class="segment-btn" data-val="compact" onclick="setCardStyle('compact')">Compact</button>
+                            <button class="segment-btn active" data-val="normal" onclick="setCardStyle('normal')">Normal</button>
+                        </div>
+                    </div>
+
+                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                        <div class="settings-row-label">Poster Size</div>
+                        <div class="segmented-control" id="poster-size-control">
+                            <button class="segment-btn" data-val="small" onclick="setPosterSize('small')">Small</button>
+                            <button class="segment-btn active" data-val="medium" onclick="setPosterSize('medium')">Medium</button>
+                            <button class="segment-btn" data-val="large" onclick="setPosterSize('large')">Large</button>
+                        </div>
+                    </div>
+
+                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                        <div class="settings-row-label">Font Size</div>
+                        <div class="segmented-control" id="font-size-control">
+                            <button class="segment-btn" data-val="small" onclick="setFontSize('small')">Small</button>
+                            <button class="segment-btn active" data-val="normal" onclick="setFontSize('normal')">Normal</button>
+                            <button class="segment-btn" data-val="large" onclick="setFontSize('large')">Large</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
+            <!-- LIBRARY -->
             <div class="settings-group">
-                <h3>Export Data</h3>
-                <p style="color:var(--text2); font-size:13px; margin-bottom:12px;">Export your library in different formats.</p>
-                <div class="export-buttons">
-                    <button class="export-btn" onclick="exportData('json')">📄 JSON</button>
-                    <button class="export-btn" onclick="exportData('csv')">📊 CSV</button>
-                    <button class="export-btn" onclick="exportData('txt')">📝 TXT</button>
-                    <button class="export-btn" onclick="openPersonalListModal()">📃 Personal List</button>
+                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                    <h3>📚 Library</h3>
+                    <span class="settings-arrow">▼</span>
+                </div>
+                <div class="settings-group-content">
+                    <button class="settings-action-btn" onclick="rescanAnime()">🎌 Re-scan Anime Tags</button>
+                    <button class="settings-action-btn" onclick="autoTagStatuses()">🏷️ Auto-tag Statuses</button>
+                    <button class="settings-action-btn" onclick="openBulkTagger()">📋 Bulk Tag Shows</button>
+                    <button class="settings-action-btn" onclick="openRateShowsModal()">⭐ Rate Your Shows</button>
                 </div>
             </div>
 
+            <!-- SYNC -->
             <div class="settings-group">
-                <h3>About</h3>
-                <p style="color:var(--text2); font-size:13px;">My Cinema Tracker v5.0</p>
-                <p style="color:var(--text2); font-size:13px;">Built with TMDB & Firebase</p>
+                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                    <h3>🔄 Sync</h3>
+                    <span class="settings-arrow">▼</span>
+                </div>
+                <div class="settings-group-content">
+                    <button class="settings-action-btn" onclick="syncAllAiringShows(false)">🔄 Sync Episodes (All Airing Shows)</button>
+                    <button class="settings-action-btn" onclick="enrichLibrary()">✨ Enrich Library (Genres, Languages, Networks)</button>
+                    <div id="settings-action-status" style="margin-top:10px;"></div>
+                </div>
+            </div>
+
+            <!-- IMPORT & EXPORT -->
+            <div class="settings-group">
+                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                    <h3>📦 Import & Export</h3>
+                    <span class="settings-arrow">▼</span>
+                </div>
+                <div class="settings-group-content">
+                    <h4 style="color:var(--text);margin-bottom:12px;font-size:14px;">Export</h4>
+                    <div class="export-buttons" style="margin-bottom:20px;">
+                        <button class="export-btn" onclick="exportData('json')">📄 JSON</button>
+                        <button class="export-btn" onclick="exportData('csv')">📊 CSV</button>
+                        <button class="export-btn" onclick="exportData('txt')">📝 TXT</button>
+                        <button class="export-btn" onclick="openPersonalListModal()">📃 Personal List</button>
+                    </div>
+
+                    <div id="import-section">
+                        <h4 style="color:var(--text);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px;cursor:pointer;"
+                            onclick="toggleImportSection()">
+                            <span id="import-arrow">▶</span> Import
+                        </h4>
+                        <div id="import-content" style="display:none;">
+                            <div class="import-box">
+                                <h4>Import Movies</h4>
+                                <textarea id="movies-json" placeholder="Paste movies JSON..."></textarea>
+                                <button id="import-movies-btn">Import Movies</button>
+                            </div>
+                            <div class="import-box">
+                                <h4>Import TV Shows &amp; Anime</h4>
+                                <textarea id="series-json" placeholder="Paste series JSON..."></textarea>
+                                <button id="import-series-btn">Import TV Shows</button>
+                            </div>
+                            <div id="import-status"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ABOUT -->
+            <div class="settings-group">
+                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                    <h3>ℹ️ About</h3>
+                    <span class="settings-arrow">▼</span>
+                </div>
+                <div class="settings-group-content">
+                    <p style="color:var(--text2); font-size:13px;">My Cinema Tracker v5.1</p>
+                    <p style="color:var(--text2); font-size:13px;">Built with TMDB & Firebase</p>
+                </div>
             </div>
         </div>
 
@@ -316,7 +401,7 @@
     <!-- STATS MODAL -->
     <div id="stats-modal" class="modal">
         <div class="modal-content" style="max-width:900px;">
-            <span class="close" onclick="document.getElementById('stats-modal').style.display='none'">&times;</span>
+            <span class="close" onclick="closeModal('stats-modal')">&times;</span>
             <div id="stats-modal-body"></div>
         </div>
     </div>
@@ -324,7 +409,7 @@
     <!-- BULK TAGGER MODAL -->
     <div id="bulk-modal" class="modal">
         <div class="modal-content" style="max-width:700px;">
-            <span class="close" onclick="document.getElementById('bulk-modal').style.display='none'">&times;</span>
+            <span class="close" onclick="closeModal('bulk-modal')">&times;</span>
             <div id="bulk-modal-body"></div>
         </div>
     </div>
@@ -364,7 +449,7 @@
     <!-- EPISODE DETAIL MODAL -->
     <div id="episode-modal" class="modal">
         <div class="modal-content" style="max-width:600px;">
-            <span class="close" onclick="document.getElementById('episode-modal').style.display='none'">&times;</span>
+            <span class="close" onclick="closeModal('episode-modal')">&times;</span>
             <div id="episode-modal-body"></div>
         </div>
     </div>
@@ -372,7 +457,7 @@
     <!-- PREVIEW MODAL -->
     <div id="preview-modal" class="modal">
         <div class="modal-content detail-modal">
-            <span class="close" onclick="document.getElementById('preview-modal').style.display='none'">&times;</span>
+            <span class="close" onclick="closeModal('preview-modal')">&times;</span>
             <div id="preview-modal-body"></div>
         </div>
     </div>
@@ -380,7 +465,7 @@
     <!-- Confirmation Dialog -->
     <div id="confirm-dialog" class="modal" style="display:none;">
         <div class="modal-content" style="max-width:400px; text-align:center; position:relative;">
-            <button class="confirm-close" onclick="document.getElementById('confirm-dialog').style.display='none'">✕</button>
+            <button class="confirm-close" onclick="closeModal('confirm-dialog')">✕</button>
             <h3 id="confirm-title" style="margin-bottom:15px;"></h3>
             <p id="confirm-message" style="margin-bottom:20px; color:var(--text2);"></p>
             <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
