@@ -2370,7 +2370,6 @@ async function loadSectionCalendar(section) {
             if(['Returning Series','In Production'].includes(det.status)&&det.next_episode_to_air){
                 const ad=det.next_episode_to_air.air_date;
                 // Default air time: midnight local origin
-                let airTimeStr = 'time TBA';
                 const airDateTime = new Date(ad + 'T00:00:00Z'); // Default midnight UTC
 
                 // Try to get origin country timezone offset
@@ -2385,10 +2384,6 @@ async function loadSectionCalendar(section) {
                 const ghanaTime = new Date(airDateTime);
                 ghanaTime.setUTCHours(utcHour, 0, 0, 0);
 
-                const hours12 = ghanaTime.getUTCHours();
-                const ampm = hours12 >= 12 ? 'pm' : 'am';
-                const displayHour = hours12 % 12 || 12;
-                airTimeStr = `${displayHour}${ampm}`;
 
                 const ep={
                     show:show.title, poster:show.poster, docId:show.docId,
@@ -2396,7 +2391,6 @@ async function loadSectionCalendar(section) {
                     episode:det.next_episode_to_air.episode_number,
                     name:det.next_episode_to_air.name,
                     airDate:ad, airDateObj:new Date(ad),
-                    airTime: airTimeStr,
                     airDateTime: ghanaTime
                 };
 
@@ -2431,8 +2425,6 @@ function displayCalItems(container, episodes, isToday) {
     episodes.sort((a,b)=>new Date(a.airDateObj)-new Date(b.airDateObj));
     container.innerHTML=episodes.map(ep=>{
         const p=safePoster(ep.poster,'thumb');
-        const dateStr = formatAirDate(new Date(ep.airDateObj));
-        const timeStr = ep.airTime || '';
         return `
             <div class="calendar-item ${isToday?'airing-today':''}" onclick="openDetails('${ep.docId}','tv')">
                 <img src="${p}" onerror="this.src='${PLACEHOLDER_THUMB}'">
@@ -2440,8 +2432,7 @@ function displayCalItems(container, episodes, isToday) {
                     <h4>${ep.show}</h4>
                     <div class="episode-title">S${String(ep.season).padStart(2,'0')}E${String(ep.episode).padStart(2,'0')} - ${ep.name}</div>
                     <div class="air-date ${isToday?'today':''}">
-                        📅 ${dateStr}
-                        ${timeStr?`<span class="air-time">${timeStr}</span>`:''}
+                        📅 ${formatAirDate(new Date(ep.airDateObj))}
                     </div>
                 </div>
             </div>`;
