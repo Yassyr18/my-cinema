@@ -245,13 +245,24 @@ body.modal-open {
 
 /* ===== SECTION JUMP PILLS ===== */
 .section-jump-pills {
-    display: flex; gap: 6px; overflow-x: auto;
-    padding: 8px 0; margin-bottom: 6px;
-    scrollbar-width: none; -ms-overflow-style: none;
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px 0;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+}
+.section-jump-pills::-webkit-scrollbar { display: none; }
+
+#anime-jump-pills,
+#tv-jump-pills {
     position: sticky;
-    top: calc(var(--top-bar-height) + var(--safe-top) + 44px);
-    z-index: 800;
+    top: calc(var(--top-bar-height) + var(--safe-top) + 42px);
+    z-index: 850;
     background: var(--bg);
+    margin: 0 -16px;
+    padding: 0 16px;
 }
 .section-jump-pills::-webkit-scrollbar { display: none; }
 
