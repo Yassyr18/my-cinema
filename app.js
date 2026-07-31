@@ -687,14 +687,21 @@ function isCurrentlyAiring(show) {
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7*24*60*60*1000);
     const oneWeekAhead = new Date(now.getTime() + 7*24*60*60*1000);
-    for (const s of (show.seasons || [])) { if (s.number === 0) continue; for (const ep of (s.episodes || [])) { if (!ep.air_date || ep.is_special) continue; const airDate = new Date(ep.air_date);
-        // If we have air time data, check if it has actually aired today
-        if (airDate.toDateString() === now.toDateString() && show.air_time_data?.source !== 'default') {
-            const ghanaHour = getGhanaAirHour(show.air_time_data.time, show.air_time_data.timezone);
-            if (now.getHours() < ghanaHour) continue; // Not aired yet today
+    for (const s of (show.seasons || [])) {
+        if (s.number === 0) continue;
+        for (const ep of (s.episodes || [])) {
+            if (!ep.air_date || ep.is_special) continue;
+            const airDate = new Date(ep.air_date);
+            // If airing today and we have real air time data, check if actually aired
+            if (airDate.toDateString() === now.toDateString() &&
+                show.air_time_data && show.air_time_data.source &&
+                show.air_time_data.source !== 'default' && show.air_time_data.time) {
+                const ghanaHour = getGhanaAirHour(show.air_time_data.time, show.air_time_data.timezone);
+                if (now.getHours() < ghanaHour) continue;
+            }
+            if (airDate >= sevenDaysAgo && airDate <= oneWeekAhead) return true;
         }
-        if (airDate >= sevenDaysAgo && airDate <= oneWeekAhead) return true;
-    }}
+    }
     return false;
 }
 
