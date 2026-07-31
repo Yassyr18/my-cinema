@@ -342,6 +342,8 @@
                 <div class="settings-group-content">
                     <button class="settings-action-btn" onclick="syncAllAiringShows(false)">🔄 Sync Episodes (All Airing Shows)</button>
                     <button class="settings-action-btn" onclick="enrichLibrary()">✨ Enrich Library (Genres, Languages, Networks)</button>
+                    <button class="settings-action-btn" onclick="fetchAllAirTimes()">🕐 Fetch Air Times (TVMaze + MAL)</button>
+                    <button class="settings-action-btn" onclick="generateErrorLog()">📋 Download Error Log</button>
                     <div id="settings-action-status" style="margin-top:10px;"></div>
                 </div>
             </div>
@@ -359,6 +361,7 @@
                         <button class="export-btn" onclick="exportData('csv')">📊 CSV</button>
                         <button class="export-btn" onclick="exportData('txt')">📝 TXT</button>
                         <button class="export-btn" onclick="openPersonalListModal()">📃 Personal List</button>
+                        <button class="export-btn" onclick="exportData('trakt')">📤 Trakt JSON</button>
                     </div>
 
                     <div id="import-section">
