@@ -15,13 +15,11 @@
 </head>
 <body>
 
-    <!-- Pull to refresh -->
     <div id="pull-refresh-indicator" class="pull-refresh-indicator">
         <div class="spinner"></div>
         <span>Release to refresh...</span>
     </div>
 
-    <!-- TOP SEARCH BAR -->
     <div class="top-bar">
         <div class="top-bar-inner">
             <span class="app-logo">🎬</span>
@@ -33,7 +31,6 @@
         </div>
     </div>
 
-    <!-- SEARCH OVERLAY -->
     <div id="search-overlay" class="search-overlay" style="display:none;">
         <div class="search-overlay-header">
             <button id="close-search-btn" class="close-search-btn">← Back</button>
@@ -51,10 +48,9 @@
         <div id="search-results" class="media-grid search-grid"></div>
     </div>
 
-    <!-- MAIN CONTENT -->
     <div class="main-content" id="main-container">
 
-        <!-- ===== ANIME SECTION ===== -->
+        <!-- ANIME -->
         <div class="section-page active" id="page-anime">
             <div class="section-sub-tabs" id="anime-sub-tabs">
                 <button class="sub-tab-btn active" data-subtab="anime-continue" data-index="0">Continue</button>
@@ -62,7 +58,6 @@
                 <button class="sub-tab-btn" data-subtab="anime-upcoming" data-index="2">Upcoming</button>
                 <button class="sub-tab-btn" data-subtab="anime-library" data-index="3">Library</button>
             </div>
-
             <div class="swipeable-tabs" id="anime-swipeable">
                 <div class="sub-tab-content active" id="anime-continue">
                     <div id="anime-jump-pills"></div>
@@ -97,6 +92,7 @@
                             <option value="Paused">Paused</option>
                             <option value="Dropped">Dropped</option>
                             <option value="Planned">Planned</option>
+                            <option value="R+ Hidden">R+ Hidden</option>
                         </select>
                     </div>
                     <div id="anime-library-grid" class="media-grid"></div>
@@ -104,7 +100,7 @@
             </div>
         </div>
 
-        <!-- ===== TV SHOWS SECTION ===== -->
+        <!-- TV SHOWS -->
         <div class="section-page" id="page-tv">
             <div class="section-sub-tabs" id="tv-sub-tabs">
                 <button class="sub-tab-btn active" data-subtab="tv-continue" data-index="0">Continue</button>
@@ -112,7 +108,6 @@
                 <button class="sub-tab-btn" data-subtab="tv-upcoming" data-index="2">Upcoming</button>
                 <button class="sub-tab-btn" data-subtab="tv-library" data-index="3">Library</button>
             </div>
-
             <div class="swipeable-tabs" id="tv-swipeable">
                 <div class="sub-tab-content active" id="tv-continue">
                     <div id="tv-jump-pills"></div>
@@ -147,6 +142,7 @@
                             <option value="Paused">Paused</option>
                             <option value="Dropped">Dropped</option>
                             <option value="Planned">Planned</option>
+                            <option value="R+ Hidden">R+ Hidden</option>
                         </select>
                     </div>
                     <div id="tv-library-grid" class="media-grid"></div>
@@ -154,14 +150,13 @@
             </div>
         </div>
 
-        <!-- ===== MOVIES SECTION ===== -->
+        <!-- MOVIES -->
         <div class="section-page" id="page-movies">
             <div class="section-sub-tabs" id="movies-sub-tabs">
                 <button class="sub-tab-btn active" data-subtab="movies-watched" data-index="0">Watched</button>
                 <button class="sub-tab-btn" data-subtab="movies-unwatched" data-index="1">Unwatched</button>
                 <button class="sub-tab-btn" data-subtab="movies-library" data-index="2">Library</button>
             </div>
-
             <div class="swipeable-tabs" id="movies-swipeable">
                 <div class="sub-tab-content active" id="movies-watched">
                     <div id="movies-watched-list" class="media-grid"></div>
@@ -182,6 +177,7 @@
                             <option value="watched">Watched</option>
                             <option value="unwatched">Unwatched</option>
                             <option value="favorites">Favorites</option>
+                            <option value="R+ Hidden">R+ Hidden</option>
                         </select>
                     </div>
                     <div id="movies-library-grid" class="media-grid"></div>
@@ -189,7 +185,7 @@
             </div>
         </div>
 
-        <!-- ===== PROFILE SECTION ===== -->
+        <!-- PROFILE -->
         <div class="section-page" id="page-profile">
             <div class="profile-banner">
                 <div class="profile-avatar">🎬</div>
@@ -245,9 +241,21 @@
                     <div class="profile-block-posters" id="p-movies-posters"></div>
                 </div>
             </div>
+
+            <!-- Smart Collections -->
+            <div class="collections-section">
+                <h3>🏆 Collections</h3>
+                <div class="collection-filter-pills" id="collection-filters">
+                    <button class="collection-filter-pill active" onclick="filterCollections('all')">All</button>
+                    <button class="collection-filter-pill" onclick="filterCollections('anime')">Anime</button>
+                    <button class="collection-filter-pill" onclick="filterCollections('tv')">TV</button>
+                    <button class="collection-filter-pill" onclick="filterCollections('movie')">Movies</button>
+                </div>
+                <div id="collections-list"></div>
+            </div>
         </div>
 
-        <!-- ===== SETTINGS SECTION ===== -->
+        <!-- SETTINGS -->
         <div class="section-page" id="page-settings">
             <h2 class="settings-title">⚙️ Settings</h2>
 
@@ -259,27 +267,23 @@
                 </div>
                 <div class="settings-group-content">
                     <div class="settings-row">
-                        <div>
-                            <div class="settings-row-label">Dark Mode</div>
-                        </div>
+                        <div><div class="settings-row-label">Dark Mode</div></div>
                         <label class="toggle-switch">
                             <input type="checkbox" id="dark-mode-toggle">
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
-
                     <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
                         <div class="settings-row-label">Accent Color</div>
                         <div class="color-presets" id="accent-color-presets">
-                            <div class="color-preset" data-color="blue"   style="background:#1e3c72;" onclick="setAccentColor('blue')"></div>
+                            <div class="color-preset" data-color="blue" style="background:#1e3c72;" onclick="setAccentColor('blue')"></div>
                             <div class="color-preset" data-color="purple" style="background:#7B1FA2;" onclick="setAccentColor('purple')"></div>
-                            <div class="color-preset" data-color="green"  style="background:#2E7D32;" onclick="setAccentColor('green')"></div>
-                            <div class="color-preset" data-color="red"    style="background:#C62828;" onclick="setAccentColor('red')"></div>
+                            <div class="color-preset" data-color="green" style="background:#2E7D32;" onclick="setAccentColor('green')"></div>
+                            <div class="color-preset" data-color="red" style="background:#C62828;" onclick="setAccentColor('red')"></div>
                             <div class="color-preset" data-color="orange" style="background:#E65100;" onclick="setAccentColor('orange')"></div>
-                            <div class="color-preset" data-color="dark"   style="background:#37474F;" onclick="setAccentColor('dark')"></div>
+                            <div class="color-preset" data-color="dark" style="background:#37474F;" onclick="setAccentColor('dark')"></div>
                         </div>
                     </div>
-
                     <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
                         <div class="settings-row-label">Rewatch Bar Color</div>
                         <div class="color-presets" id="rewatch-color-presets">
@@ -290,7 +294,6 @@
                             <div class="color-preset" data-color="#FF9800" style="background:#FF9800;" onclick="setRewatchColor('#FF9800')"></div>
                         </div>
                     </div>
-
                     <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
                         <div class="settings-row-label">Card Style</div>
                         <div class="segmented-control" id="card-style-control">
@@ -298,7 +301,6 @@
                             <button class="segment-btn active" data-val="normal" onclick="setCardStyle('normal')">Normal</button>
                         </div>
                     </div>
-
                     <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
                         <div class="settings-row-label">Poster Size</div>
                         <div class="segmented-control" id="poster-size-control">
@@ -307,7 +309,6 @@
                             <button class="segment-btn" data-val="large" onclick="setPosterSize('large')">Large</button>
                         </div>
                     </div>
-
                     <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
                         <div class="settings-row-label">Font Size</div>
                         <div class="segmented-control" id="font-size-control">
@@ -326,10 +327,22 @@
                     <span class="settings-arrow">▼</span>
                 </div>
                 <div class="settings-group-content">
-                    <button class="settings-action-btn" onclick="rescanAnime()">🎌 Re-scan Anime Tags</button>
-                    <button class="settings-action-btn" onclick="autoTagStatuses()">🏷️ Auto-tag Statuses</button>
-                    <button class="settings-action-btn" onclick="openBulkTagger()">📋 Bulk Tag Shows</button>
-                    <button class="settings-action-btn" onclick="openRateShowsModal()">⭐ Rate Your Shows</button>
+                    <button class="settings-action-btn" onclick="rescanAnime()">
+                        🎌 Re-scan Anime Tags
+                        <div class="settings-btn-desc">Re-detect which shows are anime</div>
+                    </button>
+                    <button class="settings-action-btn" onclick="autoTagStatuses()">
+                        🏷️ Auto-tag Statuses
+                        <div class="settings-btn-desc">Update watching/finished/planned based on progress</div>
+                    </button>
+                    <button class="settings-action-btn" onclick="openBulkTagger()">
+                        📋 Bulk Edit
+                        <div class="settings-btn-desc">Change status, tags & settings in bulk</div>
+                    </button>
+                    <button class="settings-action-btn" onclick="openRateShowsModal()">
+                        ⭐ Rate Library
+                        <div class="settings-btn-desc">Rate your anime, shows & movies (1-10)</div>
+                    </button>
                 </div>
             </div>
 
@@ -340,10 +353,26 @@
                     <span class="settings-arrow">▼</span>
                 </div>
                 <div class="settings-group-content">
-                    <button class="settings-action-btn" onclick="syncAllAiringShows(false)">🔄 Sync Episodes (All Airing Shows)</button>
-                    <button class="settings-action-btn" onclick="enrichLibrary()">✨ Enrich Library (Genres, Languages, Networks)</button>
-                    <button class="settings-action-btn" onclick="fetchAllAirTimes()">🕐 Fetch Air Times (TVMaze + MAL)</button>
-                    <button class="settings-action-btn" onclick="generateErrorLog()">📋 Download Error Log</button>
+                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:12px;">
+                        <div class="settings-row-label">Episode Schedule Source</div>
+                        <div class="settings-row-desc">TVMaze has more accurate air dates for anime</div>
+                        <div class="segmented-control" id="episode-source-control">
+                            <button class="segment-btn" data-val="tmdb" onclick="setEpisodeSource('tmdb')">TMDB</button>
+                            <button class="segment-btn active" data-val="tvmaze" onclick="setEpisodeSource('tvmaze')">TVMaze</button>
+                        </div>
+                    </div>
+                    <button class="settings-action-btn" onclick="syncAiringShows()">
+                        🔄 Sync Airing Shows
+                        <div class="settings-btn-desc">Updates episodes and air times for airing shows</div>
+                    </button>
+                    <button class="settings-action-btn" onclick="fullLibrarySync()">
+                        🔄 Full Library Sync
+                        <div class="settings-btn-desc">Complete sync of all shows. Also enriches genres, languages, years. Takes longer.</div>
+                    </button>
+                    <button class="settings-action-btn" onclick="generateErrorLog()">
+                        📋 Download Error Log
+                        <div class="settings-btn-desc">Download error report for troubleshooting</div>
+                    </button>
                     <div id="settings-action-status" style="margin-top:10px;"></div>
                 </div>
             </div>
@@ -393,15 +422,15 @@
                     <span class="settings-arrow">▼</span>
                 </div>
                 <div class="settings-group-content">
-                    <p style="color:var(--text2); font-size:13px;">My Cinema Tracker v5.1</p>
-                    <p style="color:var(--text2); font-size:13px;">Built with TMDB & Firebase</p>
+                    <p style="color:var(--text2);font-size:13px;">My Cinema Tracker v5.3</p>
+                    <p style="color:var(--text2);font-size:13px;">Built with TMDB, TVMaze & Firebase</p>
                 </div>
             </div>
         </div>
 
-    </div><!-- end main-content -->
+    </div>
 
-    <!-- STATS MODAL -->
+    <!-- MODALS -->
     <div id="stats-modal" class="modal">
         <div class="modal-content" style="max-width:900px;">
             <span class="close" onclick="closeModal('stats-modal')">&times;</span>
@@ -409,7 +438,6 @@
         </div>
     </div>
 
-    <!-- BULK TAGGER MODAL -->
     <div id="bulk-modal" class="modal">
         <div class="modal-content" style="max-width:700px;">
             <span class="close" onclick="closeModal('bulk-modal')">&times;</span>
@@ -417,15 +445,23 @@
         </div>
     </div>
 
-    <!-- BOTTOM NAV -->
+    <div id="collection-modal" class="modal">
+        <div class="modal-content" style="max-width:900px;">
+            <span class="close" onclick="closeModal('collection-modal')">&times;</span>
+            <div id="collection-modal-body"></div>
+        </div>
+    </div>
+
     <nav class="bottom-nav">
         <button class="nav-btn active" data-section="anime">
             <span class="nav-icon">🎌</span>
             <span class="nav-label">Anime</span>
+            <span class="nav-badge" id="anime-nav-badge"></span>
         </button>
         <button class="nav-btn" data-section="tv">
             <span class="nav-icon">📺</span>
             <span class="nav-label">TV Shows</span>
+            <span class="nav-badge" id="tv-nav-badge"></span>
         </button>
         <button class="nav-btn" data-section="movies">
             <span class="nav-icon">🎬</span>
@@ -441,7 +477,6 @@
         </button>
     </nav>
 
-    <!-- MAIN DETAIL MODAL -->
     <div id="modal" class="modal">
         <div class="modal-content detail-modal">
             <span class="close">&times;</span>
@@ -449,7 +484,6 @@
         </div>
     </div>
 
-    <!-- EPISODE DETAIL MODAL -->
     <div id="episode-modal" class="modal">
         <div class="modal-content" style="max-width:600px;">
             <span class="close" onclick="closeModal('episode-modal')">&times;</span>
@@ -457,7 +491,6 @@
         </div>
     </div>
 
-    <!-- PREVIEW MODAL -->
     <div id="preview-modal" class="modal">
         <div class="modal-content detail-modal">
             <span class="close" onclick="closeModal('preview-modal')">&times;</span>
@@ -465,13 +498,12 @@
         </div>
     </div>
 
-    <!-- Confirmation Dialog -->
     <div id="confirm-dialog" class="modal" style="display:none;">
-        <div class="modal-content" style="max-width:400px; text-align:center; position:relative;">
+        <div class="modal-content" style="max-width:400px;text-align:center;position:relative;">
             <button class="confirm-close" onclick="closeModal('confirm-dialog')">✕</button>
             <h3 id="confirm-title" style="margin-bottom:15px;"></h3>
-            <p id="confirm-message" style="margin-bottom:20px; color:var(--text2);"></p>
-            <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+            <p id="confirm-message" style="margin-bottom:20px;color:var(--text2);"></p>
+            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
                 <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
                 <button id="confirm-no" class="confirm-btn confirm-no">No</button>
                 <button id="confirm-cancel" class="confirm-btn confirm-cancel-btn" style="display:none;">Cancel</button>
