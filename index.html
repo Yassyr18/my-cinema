@@ -10,507 +10,578 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="My Cinema">
+
+    <!-- Favicon — inline SVG, no file needed -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231e3c72'/%3E%3Ctext x='32' y='46' text-anchor='middle' font-size='36' font-family='sans-serif'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
+
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
-    <div id="pull-refresh-indicator" class="pull-refresh-indicator">
-        <div class="spinner"></div>
-        <span>Release to refresh...</span>
+<!-- ===== PULL TO REFRESH ===== -->
+<div id="pull-refresh-indicator" class="pull-refresh-indicator">
+    <div class="spinner"></div>
+    <span>Release to refresh...</span>
+</div>
+
+<!-- ===== TOP BAR ===== -->
+<div class="top-bar">
+    <div class="top-bar-inner">
+        <span class="app-logo">🎬</span>
+        <div class="top-search-wrap">
+            <input type="text" id="search-input" placeholder="Search movies, shows, anime...">
+        </div>
+        <button id="search-btn" class="top-bar-btn">🔍</button>
+        <button id="refresh-btn-top" class="top-bar-btn" onclick="refreshApp()">🔄</button>
+    </div>
+</div>
+
+<!-- ===== SEARCH OVERLAY ===== -->
+<div id="search-overlay" class="search-overlay" style="display:none;">
+    <div class="search-overlay-header">
+        <button id="close-search-btn" class="close-search-btn">← Back</button>
+        <div class="search-input-row">
+            <input type="text" id="search-overlay-input" placeholder="Search..." autofocus>
+            <button id="search-clear-btn" class="search-clear-btn" style="display:none;">✕</button>
+        </div>
+        <div class="search-filter-row">
+            <button class="search-filter-btn active" data-type="multi">All</button>
+            <button class="search-filter-btn" data-type="tv">TV</button>
+            <button class="search-filter-btn" data-type="movie">Movies</button>
+            <button class="search-filter-btn" data-type="anime">Anime</button>
+        </div>
+    </div>
+    <div id="search-results" class="media-grid search-grid"></div>
+</div>
+
+<!-- ===== MAIN CONTENT ===== -->
+<div class="main-content" id="main-container">
+
+    <!-- ===== ANIME SECTION ===== -->
+    <div class="section-page active" id="page-anime">
+        <div class="section-sub-tabs" id="anime-sub-tabs">
+            <button class="sub-tab-btn active" data-subtab="anime-continue" data-index="0">Continue</button>
+            <button class="sub-tab-btn" data-subtab="anime-history"  data-index="1">History</button>
+            <button class="sub-tab-btn" data-subtab="anime-upcoming" data-index="2">Upcoming</button>
+            <button class="sub-tab-btn" data-subtab="anime-library"  data-index="3">Library</button>
+        </div>
+
+        <div class="swipeable-tabs" id="anime-swipeable">
+
+            <!-- Continue -->
+            <div class="sub-tab-content active" id="anime-continue">
+                <div id="anime-jump-pills"></div>
+                <div id="anime-continue-list"></div>
+            </div>
+
+            <!-- History -->
+            <div class="sub-tab-content" id="anime-history">
+                <div id="anime-history-list"></div>
+            </div>
+
+            <!-- Upcoming -->
+            <div class="sub-tab-content" id="anime-upcoming">
+                <h3 class="section-heading">📅 Today</h3>
+                <div id="anime-calendar-today" class="calendar-list">
+                    <p class="empty-state">Click refresh to load.</p>
+                </div>
+                <h3 class="section-heading" style="margin-top:20px;">This Week</h3>
+                <div id="anime-calendar-week" class="calendar-list"></div>
+                <h3 class="section-heading" style="margin-top:20px;">Upcoming</h3>
+                <div id="anime-calendar-upcoming" class="calendar-list"></div>
+                <button class="refresh-btn" onclick="loadSectionCalendar('anime')">🔄 Refresh</button>
+            </div>
+
+            <!-- Library -->
+            <div class="sub-tab-content" id="anime-library">
+                <div class="library-controls">
+                    <select id="anime-sort" onchange="renderLibrary('anime')">
+                        <option value="title">A-Z</option>
+                        <option value="rating">Rating</option>
+                        <option value="recent">Recently Added</option>
+                        <option value="progress">Progress</option>
+                    </select>
+                    <select id="anime-filter" onchange="renderLibrary('anime')">
+                        <option value="all">All</option>
+                        <option value="Watching">Watching</option>
+                        <option value="Up to Date">Up to Date</option>
+                        <option value="Finished">Finished</option>
+                        <option value="Rewatching">Rewatching</option>
+                        <option value="Paused">Paused</option>
+                        <option value="Dropped">Dropped</option>
+                        <option value="Planned">Planned</option>
+                        <option value="hidden">R+ Hidden</option>
+                    </select>
+                </div>
+                <div id="anime-library-grid" class="media-grid"></div>
+            </div>
+
+        </div>
     </div>
 
-    <div class="top-bar">
-        <div class="top-bar-inner">
-            <span class="app-logo">🎬</span>
-            <div class="top-search-wrap">
-                <input type="text" id="search-input" placeholder="Search movies, shows, anime...">
+    <!-- ===== TV SHOWS SECTION ===== -->
+    <div class="section-page" id="page-tv">
+        <div class="section-sub-tabs" id="tv-sub-tabs">
+            <button class="sub-tab-btn active" data-subtab="tv-continue" data-index="0">Continue</button>
+            <button class="sub-tab-btn" data-subtab="tv-history"  data-index="1">History</button>
+            <button class="sub-tab-btn" data-subtab="tv-upcoming" data-index="2">Upcoming</button>
+            <button class="sub-tab-btn" data-subtab="tv-library"  data-index="3">Library</button>
+        </div>
+
+        <div class="swipeable-tabs" id="tv-swipeable">
+
+            <!-- Continue -->
+            <div class="sub-tab-content active" id="tv-continue">
+                <div id="tv-jump-pills"></div>
+                <div id="tv-continue-list"></div>
             </div>
-            <button id="search-btn" class="top-bar-btn">🔍</button>
-            <button id="refresh-btn-top" class="top-bar-btn" onclick="refreshApp()">🔄</button>
+
+            <!-- History -->
+            <div class="sub-tab-content" id="tv-history">
+                <div id="tv-history-list"></div>
+            </div>
+
+            <!-- Upcoming -->
+            <div class="sub-tab-content" id="tv-upcoming">
+                <h3 class="section-heading">📅 Today</h3>
+                <div id="tv-calendar-today" class="calendar-list">
+                    <p class="empty-state">Click refresh to load.</p>
+                </div>
+                <h3 class="section-heading" style="margin-top:20px;">This Week</h3>
+                <div id="tv-calendar-week" class="calendar-list"></div>
+                <h3 class="section-heading" style="margin-top:20px;">Upcoming</h3>
+                <div id="tv-calendar-upcoming" class="calendar-list"></div>
+                <button class="refresh-btn" onclick="loadSectionCalendar('tv')">🔄 Refresh</button>
+            </div>
+
+            <!-- Library -->
+            <div class="sub-tab-content" id="tv-library">
+                <div class="library-controls">
+                    <select id="tv-sort" onchange="renderLibrary('tv')">
+                        <option value="title">A-Z</option>
+                        <option value="rating">Rating</option>
+                        <option value="recent">Recently Added</option>
+                        <option value="progress">Progress</option>
+                    </select>
+                    <select id="tv-filter" onchange="renderLibrary('tv')">
+                        <option value="all">All</option>
+                        <option value="Watching">Watching</option>
+                        <option value="Up to Date">Up to Date</option>
+                        <option value="Finished">Finished</option>
+                        <option value="Rewatching">Rewatching</option>
+                        <option value="Paused">Paused</option>
+                        <option value="Dropped">Dropped</option>
+                        <option value="Planned">Planned</option>
+                        <option value="hidden">R+ Hidden</option>
+                    </select>
+                </div>
+                <div id="tv-library-grid" class="media-grid"></div>
+            </div>
+
         </div>
     </div>
 
-    <div id="search-overlay" class="search-overlay" style="display:none;">
-        <div class="search-overlay-header">
-            <button id="close-search-btn" class="close-search-btn">← Back</button>
-            <div class="search-input-row">
-                <input type="text" id="search-overlay-input" placeholder="Search..." autofocus>
-                <button id="search-clear-btn" class="search-clear-btn" style="display:none;">✕</button>
-            </div>
-            <div class="search-filter-row">
-                <button class="search-filter-btn active" data-type="multi">All</button>
-                <button class="search-filter-btn" data-type="tv">TV</button>
-                <button class="search-filter-btn" data-type="movie">Movies</button>
-                <button class="search-filter-btn" data-type="anime">Anime</button>
-            </div>
+    <!-- ===== MOVIES SECTION ===== -->
+    <div class="section-page" id="page-movies">
+        <div class="section-sub-tabs" id="movies-sub-tabs">
+            <button class="sub-tab-btn active" data-subtab="movies-watched"   data-index="0">Watched</button>
+            <button class="sub-tab-btn" data-subtab="movies-unwatched" data-index="1">Unwatched</button>
+            <button class="sub-tab-btn" data-subtab="movies-library"  data-index="2">Library</button>
         </div>
-        <div id="search-results" class="media-grid search-grid"></div>
+
+        <div class="swipeable-tabs" id="movies-swipeable">
+
+            <div class="sub-tab-content active" id="movies-watched">
+                <div id="movies-watched-list" class="media-grid"></div>
+            </div>
+
+            <div class="sub-tab-content" id="movies-unwatched">
+                <div id="movies-unwatched-list" class="media-grid"></div>
+            </div>
+
+            <div class="sub-tab-content" id="movies-library">
+                <div class="library-controls">
+                    <select id="movies-sort" onchange="renderLibrary('movies')">
+                        <option value="title">A-Z</option>
+                        <option value="rating">Rating</option>
+                        <option value="recent">Recently Added</option>
+                        <option value="year">Year</option>
+                    </select>
+                    <select id="movies-filter" onchange="renderLibrary('movies')">
+                        <option value="all">All</option>
+                        <option value="watched">Watched</option>
+                        <option value="unwatched">Unwatched</option>
+                        <option value="favorites">Favorites</option>
+                        <option value="hidden">R+ Hidden</option>
+                    </select>
+                </div>
+                <div id="movies-library-grid" class="media-grid"></div>
+            </div>
+
+        </div>
     </div>
 
-    <div class="main-content" id="main-container">
+    <!-- ===== PROFILE SECTION ===== -->
+    <div class="section-page" id="page-profile">
 
-        <!-- ANIME -->
-        <div class="section-page active" id="page-anime">
-            <div class="section-sub-tabs" id="anime-sub-tabs">
-                <button class="sub-tab-btn active" data-subtab="anime-continue" data-index="0">Continue</button>
-                <button class="sub-tab-btn" data-subtab="anime-history" data-index="1">History</button>
-                <button class="sub-tab-btn" data-subtab="anime-upcoming" data-index="2">Upcoming</button>
-                <button class="sub-tab-btn" data-subtab="anime-library" data-index="3">Library</button>
+        <div class="profile-banner">
+            <div class="profile-avatar">🎬</div>
+            <h2 class="profile-name">My Cinema</h2>
+        </div>
+
+        <!-- Stat Blocks -->
+        <div class="profile-blocks">
+
+            <div class="profile-block anime-block" onclick="openStatsPage('anime')">
+                <div class="profile-block-header">
+                    <span class="profile-block-icon">🎌</span>
+                    <span class="profile-block-title">Anime</span>
+                    <span class="profile-block-arrow">→</span>
+                </div>
+                <div class="profile-block-stats">
+                    <div class="profile-stat"><span id="p-anime-watched">0</span><small>Watched</small></div>
+                    <div class="profile-stat"><span id="p-anime-total">0</span><small>Total</small></div>
+                    <div class="profile-stat"><span id="p-anime-eps">0</span><small>Episodes</small></div>
+                    <div class="profile-stat"><span id="p-anime-time">0h</span><small>Watch Time</small></div>
+                </div>
+                <div class="profile-block-bar">
+                    <div class="profile-block-fill anime-fill" id="p-anime-bar" style="width:0%"></div>
+                </div>
+                <div class="profile-block-posters" id="p-anime-posters"></div>
             </div>
-            <div class="swipeable-tabs" id="anime-swipeable">
-                <div class="sub-tab-content active" id="anime-continue">
-                    <div id="anime-jump-pills"></div>
-                    <div id="anime-continue-list"></div>
+
+            <div class="profile-block tv-block" onclick="openStatsPage('tv')">
+                <div class="profile-block-header">
+                    <span class="profile-block-icon">📺</span>
+                    <span class="profile-block-title">TV Shows</span>
+                    <span class="profile-block-arrow">→</span>
                 </div>
-                <div class="sub-tab-content" id="anime-history">
-                    <div id="anime-history-list"></div>
+                <div class="profile-block-stats">
+                    <div class="profile-stat"><span id="p-tv-watched">0</span><small>Finished</small></div>
+                    <div class="profile-stat"><span id="p-tv-total">0</span><small>Total</small></div>
+                    <div class="profile-stat"><span id="p-tv-eps">0</span><small>Episodes</small></div>
+                    <div class="profile-stat"><span id="p-tv-time">0h</span><small>Watch Time</small></div>
                 </div>
-                <div class="sub-tab-content" id="anime-upcoming">
-                    <h3 class="section-heading">📅 Upcoming Anime Episodes</h3>
-                    <div id="anime-calendar-today" class="calendar-list"><p class="empty-state">Click refresh to load.</p></div>
-                    <h3 class="section-heading" style="margin-top:20px;">This Week</h3>
-                    <div id="anime-calendar-week" class="calendar-list"></div>
-                    <h3 class="section-heading" style="margin-top:20px;">Upcoming</h3>
-                    <div id="anime-calendar-upcoming" class="calendar-list"></div>
-                    <button class="refresh-btn" onclick="loadSectionCalendar('anime')">🔄 Refresh</button>
+                <div class="profile-block-bar">
+                    <div class="profile-block-fill tv-fill" id="p-tv-bar" style="width:0%"></div>
                 </div>
-                <div class="sub-tab-content" id="anime-library">
-                    <div class="library-controls">
-                        <select id="anime-sort" onchange="renderLibrary('anime')">
-                            <option value="title">A-Z</option>
-                            <option value="rating">Rating</option>
-                            <option value="recent">Recently Added</option>
-                            <option value="progress">Progress</option>
-                        </select>
-                        <select id="anime-filter" onchange="renderLibrary('anime')">
-                            <option value="all">All</option>
-                            <option value="Watching">Watching</option>
-                            <option value="Up to Date">Up to Date</option>
-                            <option value="Finished">Finished</option>
-                            <option value="Rewatching">Rewatching</option>
-                            <option value="Paused">Paused</option>
-                            <option value="Dropped">Dropped</option>
-                            <option value="Planned">Planned</option>
-                            <option value="R+ Hidden">R+ Hidden</option>
-                        </select>
+                <div class="profile-block-posters" id="p-tv-posters"></div>
+            </div>
+
+            <div class="profile-block movies-block" onclick="openStatsPage('movies')">
+                <div class="profile-block-header">
+                    <span class="profile-block-icon">🎬</span>
+                    <span class="profile-block-title">Movies</span>
+                    <span class="profile-block-arrow">→</span>
+                </div>
+                <div class="profile-block-stats">
+                    <div class="profile-stat"><span id="p-movies-watched">0</span><small>Watched</small></div>
+                    <div class="profile-stat"><span id="p-movies-total">0</span><small>Total</small></div>
+                    <div class="profile-stat"><span id="p-movies-rewatched">0</span><small>Rewatched</small></div>
+                    <div class="profile-stat"><span id="p-movies-time">0h</span><small>Watch Time</small></div>
+                </div>
+                <div class="profile-block-bar">
+                    <div class="profile-block-fill movies-fill" id="p-movies-bar" style="width:0%"></div>
+                </div>
+                <div class="profile-block-posters" id="p-movies-posters"></div>
+            </div>
+
+        </div>
+
+        <!-- Smart Collections -->
+        <div class="collections-section">
+            <h3>🏆 Collections</h3>
+            <div class="collection-filter-pills" id="collection-filters">
+                <button class="collection-filter-pill active" onclick="filterCollections('all')">All</button>
+                <button class="collection-filter-pill" onclick="filterCollections('anime')">🎌 Anime</button>
+                <button class="collection-filter-pill" onclick="filterCollections('tv')">📺 TV</button>
+                <button class="collection-filter-pill" onclick="filterCollections('movie')">🎬 Movies</button>
+            </div>
+            <div id="collections-list"></div>
+        </div>
+
+    </div>
+
+    <!-- ===== SETTINGS SECTION ===== -->
+    <div class="section-page" id="page-settings">
+        <h2 class="settings-title">⚙️ Settings</h2>
+
+        <!-- APPEARANCE -->
+        <div class="settings-group">
+            <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                <h3>📱 Appearance</h3>
+                <span class="settings-arrow">▼</span>
+            </div>
+            <div class="settings-group-content">
+
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row-label">Dark Mode</div>
                     </div>
-                    <div id="anime-library-grid" class="media-grid"></div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="dark-mode-toggle">
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
+
+                <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                    <div class="settings-row-label">Accent Color</div>
+                    <div class="color-presets" id="accent-color-presets">
+                        <div class="color-preset" data-color="blue"   style="background:#1e3c72;" onclick="setAccentColor('blue')"></div>
+                        <div class="color-preset" data-color="purple" style="background:#7B1FA2;" onclick="setAccentColor('purple')"></div>
+                        <div class="color-preset" data-color="green"  style="background:#2E7D32;" onclick="setAccentColor('green')"></div>
+                        <div class="color-preset" data-color="red"    style="background:#C62828;" onclick="setAccentColor('red')"></div>
+                        <div class="color-preset" data-color="orange" style="background:#E65100;" onclick="setAccentColor('orange')"></div>
+                        <div class="color-preset" data-color="dark"   style="background:#37474F;" onclick="setAccentColor('dark')"></div>
+                    </div>
+                </div>
+
+                <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                    <div class="settings-row-label">Rewatch Bar Color</div>
+                    <div class="color-presets" id="rewatch-color-presets">
+                        <div class="color-preset" data-color="#FFC107" style="background:#FFC107;" onclick="setRewatchColor('#FFC107')"></div>
+                        <div class="color-preset" data-color="#2196F3" style="background:#2196F3;" onclick="setRewatchColor('#2196F3')"></div>
+                        <div class="color-preset" data-color="#9C27B0" style="background:#9C27B0;" onclick="setRewatchColor('#9C27B0')"></div>
+                        <div class="color-preset" data-color="#4CAF50" style="background:#4CAF50;" onclick="setRewatchColor('#4CAF50')"></div>
+                        <div class="color-preset" data-color="#FF9800" style="background:#FF9800;" onclick="setRewatchColor('#FF9800')"></div>
+                    </div>
+                </div>
+
+                <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                    <div class="settings-row-label">Card Style</div>
+                    <div class="segmented-control" id="card-style-control">
+                        <button class="segment-btn" data-val="compact" onclick="setCardStyle('compact')">Compact</button>
+                        <button class="segment-btn active" data-val="normal"  onclick="setCardStyle('normal')">Normal</button>
+                    </div>
+                </div>
+
+                <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                    <div class="settings-row-label">Poster Size</div>
+                    <div class="segmented-control" id="poster-size-control">
+                        <button class="segment-btn" data-val="small"  onclick="setPosterSize('small')">Small</button>
+                        <button class="segment-btn active" data-val="medium" onclick="setPosterSize('medium')">Medium</button>
+                        <button class="segment-btn" data-val="large"  onclick="setPosterSize('large')">Large</button>
+                    </div>
+                </div>
+
+                <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                    <div class="settings-row-label">Font Size</div>
+                    <div class="segmented-control" id="font-size-control">
+                        <button class="segment-btn" data-val="small"  onclick="setFontSize('small')">Small</button>
+                        <button class="segment-btn active" data-val="normal" onclick="setFontSize('normal')">Normal</button>
+                        <button class="segment-btn" data-val="large"  onclick="setFontSize('large')">Large</button>
+                    </div>
+                </div>
+
             </div>
         </div>
 
-        <!-- TV SHOWS -->
-        <div class="section-page" id="page-tv">
-            <div class="section-sub-tabs" id="tv-sub-tabs">
-                <button class="sub-tab-btn active" data-subtab="tv-continue" data-index="0">Continue</button>
-                <button class="sub-tab-btn" data-subtab="tv-history" data-index="1">History</button>
-                <button class="sub-tab-btn" data-subtab="tv-upcoming" data-index="2">Upcoming</button>
-                <button class="sub-tab-btn" data-subtab="tv-library" data-index="3">Library</button>
+        <!-- LIBRARY -->
+        <div class="settings-group">
+            <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                <h3>📚 Library</h3>
+                <span class="settings-arrow">▼</span>
             </div>
-            <div class="swipeable-tabs" id="tv-swipeable">
-                <div class="sub-tab-content active" id="tv-continue">
-                    <div id="tv-jump-pills"></div>
-                    <div id="tv-continue-list"></div>
-                </div>
-                <div class="sub-tab-content" id="tv-history">
-                    <div id="tv-history-list"></div>
-                </div>
-                <div class="sub-tab-content" id="tv-upcoming">
-                    <h3 class="section-heading">📅 Upcoming TV Episodes</h3>
-                    <div id="tv-calendar-today" class="calendar-list"><p class="empty-state">Click refresh to load.</p></div>
-                    <h3 class="section-heading" style="margin-top:20px;">This Week</h3>
-                    <div id="tv-calendar-week" class="calendar-list"></div>
-                    <h3 class="section-heading" style="margin-top:20px;">Upcoming</h3>
-                    <div id="tv-calendar-upcoming" class="calendar-list"></div>
-                    <button class="refresh-btn" onclick="loadSectionCalendar('tv')">🔄 Refresh</button>
-                </div>
-                <div class="sub-tab-content" id="tv-library">
-                    <div class="library-controls">
-                        <select id="tv-sort" onchange="renderLibrary('tv')">
-                            <option value="title">A-Z</option>
-                            <option value="rating">Rating</option>
-                            <option value="recent">Recently Added</option>
-                            <option value="progress">Progress</option>
-                        </select>
-                        <select id="tv-filter" onchange="renderLibrary('tv')">
-                            <option value="all">All</option>
-                            <option value="Watching">Watching</option>
-                            <option value="Up to Date">Up to Date</option>
-                            <option value="Finished">Finished</option>
-                            <option value="Rewatching">Rewatching</option>
-                            <option value="Paused">Paused</option>
-                            <option value="Dropped">Dropped</option>
-                            <option value="Planned">Planned</option>
-                            <option value="R+ Hidden">R+ Hidden</option>
-                        </select>
-                    </div>
-                    <div id="tv-library-grid" class="media-grid"></div>
-                </div>
+            <div class="settings-group-content">
+                <button class="settings-action-btn" onclick="rescanAnime()">
+                    🎌 Re-scan Anime Tags
+                    <div class="settings-btn-desc">Re-detect anime from TMDB genres and networks</div>
+                </button>
+                <button class="settings-action-btn" onclick="autoTagStatuses()">
+                    🏷️ Auto-tag Statuses
+                    <div class="settings-btn-desc">Update Watching/Finished/Planned based on progress</div>
+                </button>
+                <button class="settings-action-btn" onclick="openBulkTagger()">
+                    📋 Bulk Edit
+                    <div class="settings-btn-desc">Change status, tags &amp; settings in bulk</div>
+                </button>
+                <button class="settings-action-btn" onclick="openRateShowsModal()">
+                    ⭐ Rate Library
+                    <div class="settings-btn-desc">Rate your anime, shows &amp; movies</div>
+                </button>
             </div>
         </div>
 
-        <!-- MOVIES -->
-        <div class="section-page" id="page-movies">
-            <div class="section-sub-tabs" id="movies-sub-tabs">
-                <button class="sub-tab-btn active" data-subtab="movies-watched" data-index="0">Watched</button>
-                <button class="sub-tab-btn" data-subtab="movies-unwatched" data-index="1">Unwatched</button>
-                <button class="sub-tab-btn" data-subtab="movies-library" data-index="2">Library</button>
+        <!-- SYNC -->
+        <div class="settings-group">
+            <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                <h3>🔄 Sync</h3>
+                <span class="settings-arrow">▼</span>
             </div>
-            <div class="swipeable-tabs" id="movies-swipeable">
-                <div class="sub-tab-content active" id="movies-watched">
-                    <div id="movies-watched-list" class="media-grid"></div>
-                </div>
-                <div class="sub-tab-content" id="movies-unwatched">
-                    <div id="movies-unwatched-list" class="media-grid"></div>
-                </div>
-                <div class="sub-tab-content" id="movies-library">
-                    <div class="library-controls">
-                        <select id="movies-sort" onchange="renderLibrary('movies')">
-                            <option value="title">A-Z</option>
-                            <option value="rating">Rating</option>
-                            <option value="recent">Recently Added</option>
-                            <option value="year">Year</option>
-                        </select>
-                        <select id="movies-filter" onchange="renderLibrary('movies')">
-                            <option value="all">All</option>
-                            <option value="watched">Watched</option>
-                            <option value="unwatched">Unwatched</option>
-                            <option value="favorites">Favorites</option>
-                            <option value="R+ Hidden">R+ Hidden</option>
-                        </select>
-                    </div>
-                    <div id="movies-library-grid" class="media-grid"></div>
-                </div>
-            </div>
-        </div>
+            <div class="settings-group-content">
 
-        <!-- PROFILE -->
-        <div class="section-page" id="page-profile">
-            <div class="profile-banner">
-                <div class="profile-avatar">🎬</div>
-                <h2 class="profile-name">My Cinema</h2>
-            </div>
-
-            <div class="profile-blocks">
-                <div class="profile-block anime-block" onclick="openStatsPage('anime')">
-                    <div class="profile-block-header">
-                        <span class="profile-block-icon">🎌</span>
-                        <span class="profile-block-title">Anime</span>
-                        <span class="profile-block-arrow">→</span>
+                <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;padding-bottom:16px;">
+                    <div class="settings-row-label">Episode Schedule Source</div>
+                    <div class="settings-row-desc">TVMaze has more accurate air dates for anime</div>
+                    <div class="segmented-control" id="episode-source-control" style="margin-top:6px;">
+                        <button class="segment-btn" data-val="tmdb"   onclick="setEpisodeSource('tmdb')">TMDB</button>
+                        <button class="segment-btn active" data-val="tvmaze" onclick="setEpisodeSource('tvmaze')">TVMaze</button>
                     </div>
-                    <div class="profile-block-stats">
-                        <div class="profile-stat"><span id="p-anime-watched">0</span><small>Watched</small></div>
-                        <div class="profile-stat"><span id="p-anime-total">0</span><small>Total</small></div>
-                        <div class="profile-stat"><span id="p-anime-eps">0</span><small>Episodes</small></div>
-                        <div class="profile-stat"><span id="p-anime-time">0h</span><small>Watch Time</small></div>
-                    </div>
-                    <div class="profile-block-bar"><div class="profile-block-fill anime-fill" id="p-anime-bar" style="width:0%"></div></div>
-                    <div class="profile-block-posters" id="p-anime-posters"></div>
                 </div>
 
-                <div class="profile-block tv-block" onclick="openStatsPage('tv')">
-                    <div class="profile-block-header">
-                        <span class="profile-block-icon">📺</span>
-                        <span class="profile-block-title">TV Shows</span>
-                        <span class="profile-block-arrow">→</span>
-                    </div>
-                    <div class="profile-block-stats">
-                        <div class="profile-stat"><span id="p-tv-watched">0</span><small>Finished</small></div>
-                        <div class="profile-stat"><span id="p-tv-total">0</span><small>Total</small></div>
-                        <div class="profile-stat"><span id="p-tv-eps">0</span><small>Episodes</small></div>
-                        <div class="profile-stat"><span id="p-tv-time">0h</span><small>Watch Time</small></div>
-                    </div>
-                    <div class="profile-block-bar"><div class="profile-block-fill tv-fill" id="p-tv-bar" style="width:0%"></div></div>
-                    <div class="profile-block-posters" id="p-tv-posters"></div>
-                </div>
+                <button class="settings-action-btn" onclick="syncAiringShows(false)">
+                    🔄 Sync Airing Shows
+                    <div class="settings-btn-desc">Updates episodes and air times for airing shows</div>
+                </button>
+                <button class="settings-action-btn" onclick="fullLibrarySync()">
+                    🔄 Full Library Sync
+                    <div class="settings-btn-desc">Complete sync of all shows. Also enriches genres, languages, years. Takes longer.</div>
+                </button>
+                <button class="settings-action-btn" onclick="generateErrorLog()">
+                    📋 Download Error Log
+                    <div class="settings-btn-desc">Download a log of any errors that occurred</div>
+                </button>
 
-                <div class="profile-block movies-block" onclick="openStatsPage('movies')">
-                    <div class="profile-block-header">
-                        <span class="profile-block-icon">🎬</span>
-                        <span class="profile-block-title">Movies</span>
-                        <span class="profile-block-arrow">→</span>
-                    </div>
-                    <div class="profile-block-stats">
-                        <div class="profile-stat"><span id="p-movies-watched">0</span><small>Watched</small></div>
-                        <div class="profile-stat"><span id="p-movies-total">0</span><small>Total</small></div>
-                        <div class="profile-stat"><span id="p-movies-rewatched">0</span><small>Rewatched</small></div>
-                        <div class="profile-stat"><span id="p-movies-time">0h</span><small>Watch Time</small></div>
-                    </div>
-                    <div class="profile-block-bar"><div class="profile-block-fill movies-fill" id="p-movies-bar" style="width:0%"></div></div>
-                    <div class="profile-block-posters" id="p-movies-posters"></div>
-                </div>
-            </div>
-
-            <!-- Smart Collections -->
-            <div class="collections-section">
-                <h3>🏆 Collections</h3>
-                <div class="collection-filter-pills" id="collection-filters">
-                    <button class="collection-filter-pill active" onclick="filterCollections('all')">All</button>
-                    <button class="collection-filter-pill" onclick="filterCollections('anime')">Anime</button>
-                    <button class="collection-filter-pill" onclick="filterCollections('tv')">TV</button>
-                    <button class="collection-filter-pill" onclick="filterCollections('movie')">Movies</button>
-                </div>
-                <div id="collections-list"></div>
+                <div id="settings-action-status" style="margin-top:10px;"></div>
             </div>
         </div>
 
-        <!-- SETTINGS -->
-        <div class="section-page" id="page-settings">
-            <h2 class="settings-title">⚙️ Settings</h2>
+        <!-- IMPORT & EXPORT -->
+        <div class="settings-group">
+            <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                <h3>📦 Import &amp; Export</h3>
+                <span class="settings-arrow">▼</span>
+            </div>
+            <div class="settings-group-content">
 
-            <!-- APPEARANCE -->
-            <div class="settings-group">
-                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
-                    <h3>📱 Appearance</h3>
-                    <span class="settings-arrow">▼</span>
+                <h4 style="color:var(--text);margin-bottom:12px;font-size:14px;">Export</h4>
+                <div class="export-buttons" style="margin-bottom:20px;">
+                    <button class="export-btn" onclick="exportData('json')">📄 JSON</button>
+                    <button class="export-btn" onclick="exportData('csv')">📊 CSV</button>
+                    <button class="export-btn" onclick="exportData('txt')">📝 TXT</button>
+                    <button class="export-btn" onclick="openPersonalListModal()">📃 Personal List</button>
+                    <button class="export-btn" onclick="exportData('trakt')">📤 Trakt JSON</button>
                 </div>
-                <div class="settings-group-content">
-                    <div class="settings-row">
-                        <div><div class="settings-row-label">Dark Mode</div></div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="dark-mode-toggle">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                        <div class="settings-row-label">Accent Color</div>
-                        <div class="color-presets" id="accent-color-presets">
-                            <div class="color-preset" data-color="blue" style="background:#1e3c72;" onclick="setAccentColor('blue')"></div>
-                            <div class="color-preset" data-color="purple" style="background:#7B1FA2;" onclick="setAccentColor('purple')"></div>
-                            <div class="color-preset" data-color="green" style="background:#2E7D32;" onclick="setAccentColor('green')"></div>
-                            <div class="color-preset" data-color="red" style="background:#C62828;" onclick="setAccentColor('red')"></div>
-                            <div class="color-preset" data-color="orange" style="background:#E65100;" onclick="setAccentColor('orange')"></div>
-                            <div class="color-preset" data-color="dark" style="background:#37474F;" onclick="setAccentColor('dark')"></div>
+
+                <!-- Import (collapsible) -->
+                <div id="import-section">
+                    <h4 style="color:var(--text);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px;cursor:pointer;"
+                        onclick="toggleImportSection()">
+                        <span id="import-arrow">▶</span> Import
+                    </h4>
+                    <div id="import-content" style="display:none;">
+                        <div class="import-box">
+                            <h4>Import Movies</h4>
+                            <textarea id="movies-json" placeholder="Paste movies JSON..."></textarea>
+                            <button id="import-movies-btn">Import Movies</button>
                         </div>
-                    </div>
-                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                        <div class="settings-row-label">Rewatch Bar Color</div>
-                        <div class="color-presets" id="rewatch-color-presets">
-                            <div class="color-preset" data-color="#FFC107" style="background:#FFC107;" onclick="setRewatchColor('#FFC107')"></div>
-                            <div class="color-preset" data-color="#2196F3" style="background:#2196F3;" onclick="setRewatchColor('#2196F3')"></div>
-                            <div class="color-preset" data-color="#9C27B0" style="background:#9C27B0;" onclick="setRewatchColor('#9C27B0')"></div>
-                            <div class="color-preset" data-color="#4CAF50" style="background:#4CAF50;" onclick="setRewatchColor('#4CAF50')"></div>
-                            <div class="color-preset" data-color="#FF9800" style="background:#FF9800;" onclick="setRewatchColor('#FF9800')"></div>
+                        <div class="import-box">
+                            <h4>Import TV Shows &amp; Anime</h4>
+                            <textarea id="series-json" placeholder="Paste series JSON..."></textarea>
+                            <button id="import-series-btn">Import TV Shows</button>
                         </div>
-                    </div>
-                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                        <div class="settings-row-label">Card Style</div>
-                        <div class="segmented-control" id="card-style-control">
-                            <button class="segment-btn" data-val="compact" onclick="setCardStyle('compact')">Compact</button>
-                            <button class="segment-btn active" data-val="normal" onclick="setCardStyle('normal')">Normal</button>
-                        </div>
-                    </div>
-                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                        <div class="settings-row-label">Poster Size</div>
-                        <div class="segmented-control" id="poster-size-control">
-                            <button class="segment-btn" data-val="small" onclick="setPosterSize('small')">Small</button>
-                            <button class="segment-btn active" data-val="medium" onclick="setPosterSize('medium')">Medium</button>
-                            <button class="segment-btn" data-val="large" onclick="setPosterSize('large')">Large</button>
-                        </div>
-                    </div>
-                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-                        <div class="settings-row-label">Font Size</div>
-                        <div class="segmented-control" id="font-size-control">
-                            <button class="segment-btn" data-val="small" onclick="setFontSize('small')">Small</button>
-                            <button class="segment-btn active" data-val="normal" onclick="setFontSize('normal')">Normal</button>
-                            <button class="segment-btn" data-val="large" onclick="setFontSize('large')">Large</button>
-                        </div>
+                        <div id="import-status"></div>
                     </div>
                 </div>
+
             </div>
+        </div>
 
-            <!-- LIBRARY -->
-            <div class="settings-group">
-                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
-                    <h3>📚 Library</h3>
-                    <span class="settings-arrow">▼</span>
-                </div>
-                <div class="settings-group-content">
-                    <button class="settings-action-btn" onclick="rescanAnime()">
-                        🎌 Re-scan Anime Tags
-                        <div class="settings-btn-desc">Re-detect which shows are anime</div>
-                    </button>
-                    <button class="settings-action-btn" onclick="autoTagStatuses()">
-                        🏷️ Auto-tag Statuses
-                        <div class="settings-btn-desc">Update watching/finished/planned based on progress</div>
-                    </button>
-                    <button class="settings-action-btn" onclick="openBulkTagger()">
-                        📋 Bulk Edit
-                        <div class="settings-btn-desc">Change status, tags & settings in bulk</div>
-                    </button>
-                    <button class="settings-action-btn" onclick="openRateShowsModal()">
-                        ⭐ Rate Library
-                        <div class="settings-btn-desc">Rate your anime, shows & movies (1-10)</div>
-                    </button>
-                </div>
+        <!-- ABOUT -->
+        <div class="settings-group">
+            <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
+                <h3>ℹ️ About</h3>
+                <span class="settings-arrow">▼</span>
             </div>
-
-            <!-- SYNC -->
-            <div class="settings-group">
-                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
-                    <h3>🔄 Sync</h3>
-                    <span class="settings-arrow">▼</span>
-                </div>
-                <div class="settings-group-content">
-                    <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;margin-bottom:12px;">
-                        <div class="settings-row-label">Episode Schedule Source</div>
-                        <div class="settings-row-desc">TVMaze has more accurate air dates for anime</div>
-                        <div class="segmented-control" id="episode-source-control">
-                            <button class="segment-btn" data-val="tmdb" onclick="setEpisodeSource('tmdb')">TMDB</button>
-                            <button class="segment-btn active" data-val="tvmaze" onclick="setEpisodeSource('tvmaze')">TVMaze</button>
-                        </div>
-                    </div>
-                    <button class="settings-action-btn" onclick="syncAiringShows()">
-                        🔄 Sync Airing Shows
-                        <div class="settings-btn-desc">Updates episodes and air times for airing shows</div>
-                    </button>
-                    <button class="settings-action-btn" onclick="fullLibrarySync()">
-                        🔄 Full Library Sync
-                        <div class="settings-btn-desc">Complete sync of all shows. Also enriches genres, languages, years. Takes longer.</div>
-                    </button>
-                    <button class="settings-action-btn" onclick="generateErrorLog()">
-                        📋 Download Error Log
-                        <div class="settings-btn-desc">Download error report for troubleshooting</div>
-                    </button>
-                    <div id="settings-action-status" style="margin-top:10px;"></div>
-                </div>
-            </div>
-
-            <!-- IMPORT & EXPORT -->
-            <div class="settings-group">
-                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
-                    <h3>📦 Import & Export</h3>
-                    <span class="settings-arrow">▼</span>
-                </div>
-                <div class="settings-group-content">
-                    <h4 style="color:var(--text);margin-bottom:12px;font-size:14px;">Export</h4>
-                    <div class="export-buttons" style="margin-bottom:20px;">
-                        <button class="export-btn" onclick="exportData('json')">📄 JSON</button>
-                        <button class="export-btn" onclick="exportData('csv')">📊 CSV</button>
-                        <button class="export-btn" onclick="exportData('txt')">📝 TXT</button>
-                        <button class="export-btn" onclick="openPersonalListModal()">📃 Personal List</button>
-                        <button class="export-btn" onclick="exportData('trakt')">📤 Trakt JSON</button>
-                    </div>
-
-                    <div id="import-section">
-                        <h4 style="color:var(--text);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px;cursor:pointer;"
-                            onclick="toggleImportSection()">
-                            <span id="import-arrow">▶</span> Import
-                        </h4>
-                        <div id="import-content" style="display:none;">
-                            <div class="import-box">
-                                <h4>Import Movies</h4>
-                                <textarea id="movies-json" placeholder="Paste movies JSON..."></textarea>
-                                <button id="import-movies-btn">Import Movies</button>
-                            </div>
-                            <div class="import-box">
-                                <h4>Import TV Shows &amp; Anime</h4>
-                                <textarea id="series-json" placeholder="Paste series JSON..."></textarea>
-                                <button id="import-series-btn">Import TV Shows</button>
-                            </div>
-                            <div id="import-status"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ABOUT -->
-            <div class="settings-group">
-                <div class="settings-group-header" onclick="toggleSettingsGroup(this)">
-                    <h3>ℹ️ About</h3>
-                    <span class="settings-arrow">▼</span>
-                </div>
-                <div class="settings-group-content">
-                    <p style="color:var(--text2);font-size:13px;">My Cinema Tracker v5.3</p>
-                    <p style="color:var(--text2);font-size:13px;">Built with TMDB, TVMaze & Firebase</p>
-                </div>
+            <div class="settings-group-content">
+                <p style="color:var(--text2);font-size:13px;">My Cinema Tracker v5.3</p>
+                <p style="color:var(--text2);font-size:13px;margin-top:6px;">Built with TMDB, TVMaze &amp; Firebase</p>
             </div>
         </div>
 
     </div>
 
-    <!-- MODALS -->
-    <div id="stats-modal" class="modal">
-        <div class="modal-content" style="max-width:900px;">
-            <span class="close" onclick="closeModal('stats-modal')">&times;</span>
-            <div id="stats-modal-body"></div>
+</div><!-- end main-content -->
+
+<!-- ===== STATS MODAL ===== -->
+<div id="stats-modal" class="modal">
+    <div class="modal-content" style="max-width:900px;">
+        <span class="close" onclick="closeModal('stats-modal')">&times;</span>
+        <div id="stats-modal-body"></div>
+    </div>
+</div>
+
+<!-- ===== BULK EDIT MODAL ===== -->
+<div id="bulk-modal" class="modal">
+    <div class="modal-content" style="max-width:700px;">
+        <span class="close" onclick="closeModal('bulk-modal')">&times;</span>
+        <div id="bulk-modal-body"></div>
+    </div>
+</div>
+
+<!-- ===== COLLECTION MODAL ===== -->
+<div id="collection-modal" class="modal">
+    <div class="modal-content" style="max-width:900px;">
+        <span class="close" onclick="closeModal('collection-modal')">&times;</span>
+        <div id="collection-modal-body"></div>
+    </div>
+</div>
+
+<!-- ===== BOTTOM NAV ===== -->
+<nav class="bottom-nav">
+    <button class="nav-btn active" data-section="anime">
+        <span class="nav-icon">🎌</span>
+        <span class="nav-label">Anime</span>
+        <span class="nav-badge" id="anime-nav-badge"></span>
+    </button>
+    <button class="nav-btn" data-section="tv">
+        <span class="nav-icon">📺</span>
+        <span class="nav-label">TV Shows</span>
+        <span class="nav-badge" id="tv-nav-badge"></span>
+    </button>
+    <button class="nav-btn" data-section="movies">
+        <span class="nav-icon">🎬</span>
+        <span class="nav-label">Movies</span>
+    </button>
+    <button class="nav-btn" data-section="profile">
+        <span class="nav-icon">👤</span>
+        <span class="nav-label">Profile</span>
+    </button>
+    <button class="nav-btn" data-section="settings">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Settings</span>
+    </button>
+</nav>
+
+<!-- ===== MAIN DETAIL MODAL ===== -->
+<div id="modal" class="modal">
+    <div class="modal-content detail-modal">
+        <span class="close">&times;</span>
+        <div id="modal-body"></div>
+    </div>
+</div>
+
+<!-- ===== EPISODE DETAIL MODAL ===== -->
+<div id="episode-modal" class="modal">
+    <div class="modal-content" style="max-width:600px;">
+        <span class="close" onclick="closeModal('episode-modal')">&times;</span>
+        <div id="episode-modal-body"></div>
+    </div>
+</div>
+
+<!-- ===== PREVIEW MODAL ===== -->
+<div id="preview-modal" class="modal">
+    <div class="modal-content detail-modal">
+        <span class="close" onclick="closeModal('preview-modal')">&times;</span>
+        <div id="preview-modal-body"></div>
+    </div>
+</div>
+
+<!-- ===== CONFIRM DIALOG ===== -->
+<div id="confirm-dialog" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width:400px;text-align:center;position:relative;">
+        <button class="confirm-close" onclick="closeModal('confirm-dialog')">✕</button>
+        <h3 id="confirm-title" style="margin-bottom:15px;"></h3>
+        <p id="confirm-message" style="margin-bottom:20px;color:var(--text2);"></p>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+            <button id="confirm-yes"    class="confirm-btn confirm-yes">Yes</button>
+            <button id="confirm-no"     class="confirm-btn confirm-no">No</button>
+            <button id="confirm-cancel" class="confirm-btn confirm-cancel-btn" style="display:none;">Cancel</button>
         </div>
     </div>
+</div>
 
-    <div id="bulk-modal" class="modal">
-        <div class="modal-content" style="max-width:700px;">
-            <span class="close" onclick="closeModal('bulk-modal')">&times;</span>
-            <div id="bulk-modal-body"></div>
-        </div>
-    </div>
-
-    <div id="collection-modal" class="modal">
-        <div class="modal-content" style="max-width:900px;">
-            <span class="close" onclick="closeModal('collection-modal')">&times;</span>
-            <div id="collection-modal-body"></div>
-        </div>
-    </div>
-
-    <nav class="bottom-nav">
-        <button class="nav-btn active" data-section="anime">
-            <span class="nav-icon">🎌</span>
-            <span class="nav-label">Anime</span>
-            <span class="nav-badge" id="anime-nav-badge"></span>
-        </button>
-        <button class="nav-btn" data-section="tv">
-            <span class="nav-icon">📺</span>
-            <span class="nav-label">TV Shows</span>
-            <span class="nav-badge" id="tv-nav-badge"></span>
-        </button>
-        <button class="nav-btn" data-section="movies">
-            <span class="nav-icon">🎬</span>
-            <span class="nav-label">Movies</span>
-        </button>
-        <button class="nav-btn" data-section="profile">
-            <span class="nav-icon">👤</span>
-            <span class="nav-label">Profile</span>
-        </button>
-        <button class="nav-btn" data-section="settings">
-            <span class="nav-icon">⚙️</span>
-            <span class="nav-label">Settings</span>
-        </button>
-    </nav>
-
-    <div id="modal" class="modal">
-        <div class="modal-content detail-modal">
-            <span class="close">&times;</span>
-            <div id="modal-body"></div>
-        </div>
-    </div>
-
-    <div id="episode-modal" class="modal">
-        <div class="modal-content" style="max-width:600px;">
-            <span class="close" onclick="closeModal('episode-modal')">&times;</span>
-            <div id="episode-modal-body"></div>
-        </div>
-    </div>
-
-    <div id="preview-modal" class="modal">
-        <div class="modal-content detail-modal">
-            <span class="close" onclick="closeModal('preview-modal')">&times;</span>
-            <div id="preview-modal-body"></div>
-        </div>
-    </div>
-
-    <div id="confirm-dialog" class="modal" style="display:none;">
-        <div class="modal-content" style="max-width:400px;text-align:center;position:relative;">
-            <button class="confirm-close" onclick="closeModal('confirm-dialog')">✕</button>
-            <h3 id="confirm-title" style="margin-bottom:15px;"></h3>
-            <p id="confirm-message" style="margin-bottom:20px;color:var(--text2);"></p>
-            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-                <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
-                <button id="confirm-no" class="confirm-btn confirm-no">No</button>
-                <button id="confirm-cancel" class="confirm-btn confirm-cancel-btn" style="display:none;">Cancel</button>
-            </div>
-        </div>
-    </div>
-
-    <script type="module" src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>
