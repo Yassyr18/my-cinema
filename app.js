@@ -133,12 +133,10 @@ function getEpisodeSource() { return localStorage.getItem('episodeSource') || 't
 function setEpisodeSource(src) {
     localStorage.setItem('episodeSource', src);
     updateSegmentedControl('episode-source-control', src);
-    // Swap active seasons for all shows and persist
+    // Swap active seasons in memory only — Firebase updates on next sync
     myList.forEach(item => {
         if (item.type !== 'tv') return;
         swapActiveSeasons(item, src);
-        // Persist the swap to Firebase
-        updateDoc(doc(db, 'series', item.docId), { seasons: item.seasons }).catch(e => logError('Persist swap', e));
     });
     renderAllSections();
 }
@@ -243,9 +241,8 @@ function syncWatchDataAcross(fromSeasons, toSeasons, episodeMap, fromSource) {
     fromSeasons.forEach(fromSeason => {
         if (fromSeason.number === 0) return;
         (fromSeason.episodes || []).forEach(fromEp => {
-            // Skip season 0 specials (handled separately) but allow significant specials
-            if (fromEp.is_special && !fromEp.is_significant_special) return;
-
+            // Allow all specials to sync (both significant and insignificant)
+            
             // Find mapping
             let mapping;
             if (fromSource === 'tmdb') {
@@ -765,6 +762,8 @@ async function syncAiringShows(silent = false) {
 async function syncShowWithTMDB(show, det) {
     const newSeasons = [];
     for (let s = 0; s <= det.number_of_seasons; s++) {
+        // Skip season 0 if show has no specials season on TMDB
+        if (s === 0 && !det.seasons?.some(se => se.season_number === 0)) continue;
         try {
             const sd = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}/season/${s}?api_key=${TMDB_API_KEY}`);
             if (!sd.episodes?.length) continue;
@@ -1208,6 +1207,7 @@ function renderContinueWatching(sectionType) {
     const rewatching = shows.filter(s => s.user_status === 'Rewatching');
     const inProgress = shows.filter(item => {
         if (['Rewatching', 'Dropped', 'Planned'].includes(item.user_status)) return false;
+        if (item.user_status === 'Up to Date' && !isCurrentlyAiring(item)) return false;
         let hasW = false, hasUw = false;
         item.seasons?.forEach(s => { if (s.number === 0) return; s.episodes?.forEach(ep => {
             if (ep.is_special || isPlaceholderEpisode(ep)) return;
@@ -1449,6 +1449,68 @@ function filterCollectionModal(collId, typeFilter, btn) {
     grid.innerHTML = items.length ? items.map(item => createMediaCard(item)).join('') : '<p class="empty-state">No items.</p>';
 }
 
+// ===== WATCH DATE PROMPT =====
+async function promptWatchDate(epAirDate, isAnime) {
+    return new Promise(resolve => {
+        const dialog = document.getElementById('confirm-dialog');
+        const hasAirDate = epAirDate && !isNaN(new Date(epAirDate).getTime());
+        const airDateStr = hasAirDate ? formatDate(epAirDate) : null;
+
+        document.getElementById('confirm-title').textContent = 'Watch Date';
+        document.getElementById('confirm-message').textContent = 'When did you watch this?';
+
+        const yesBtn = document.getElementById('confirm-yes');
+        const noBtn = document.getElementById('confirm-no');
+        const cancelBtn = document.getElementById('confirm-cancel');
+        const closeBtn = dialog.querySelector('.confirm-close');
+
+        // Build custom button area
+        const btnContainer = yesBtn.parentElement;
+        btnContainer.innerHTML = `
+            <button id="wd-now" class="confirm-btn" style="background:var(--accent);color:white;min-width:auto;padding:8px 14px;font-size:12px;">Now</button>
+            ${hasAirDate ? `<button id="wd-airdate" class="confirm-btn" style="background:var(--green);color:white;min-width:auto;padding:8px 14px;font-size:12px;">Air Date (${airDateStr})</button>` : ''}
+            ${hasAirDate ? `<button id="wd-after" class="confirm-btn" style="background:var(--blue);color:white;min-width:auto;padding:8px 14px;font-size:12px;">Days After Air</button>` : ''}
+            <button id="wd-custom" class="confirm-btn" style="background:var(--surface2);color:var(--text);border:2px solid var(--border);min-width:auto;padding:8px 14px;font-size:12px;">Custom</button>
+        `;
+
+        openModal('confirm-dialog');
+
+        const cleanup = () => {
+            closeModal('confirm-dialog');
+            // Restore original buttons
+            btnContainer.innerHTML = `
+                <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
+                <button id="confirm-no" class="confirm-btn confirm-no">No</button>
+                <button id="confirm-cancel" class="confirm-btn confirm-cancel-btn" style="display:none;">Cancel</button>
+            `;
+        };
+
+        document.getElementById('wd-now')?.addEventListener('click', () => { cleanup(); resolve({ type: 'now' }); });
+        document.getElementById('wd-airdate')?.addEventListener('click', () => { cleanup(); resolve({ type: 'airdate', date: epAirDate }); });
+        document.getElementById('wd-after')?.addEventListener('click', () => {
+            const days = prompt('How many days after air date?', '0');
+            if (days === null) { cleanup(); resolve({ type: 'cancel' }); return; }
+            const d = new Date(epAirDate);
+            d.setDate(d.getDate() + parseInt(days || 0));
+            cleanup();
+            resolve({ type: 'after', date: d.toISOString() });
+        });
+        document.getElementById('wd-custom')?.addEventListener('click', () => { cleanup(); resolve({ type: 'custom' }); });
+        closeBtn?.addEventListener('click', () => { cleanup(); resolve({ type: 'cancel' }); });
+    });
+}
+
+function getWatchDateFromPromptResult(result, baseDate) {
+    if (!result) return new Date().toISOString();
+    switch (result.type) {
+        case 'now': return new Date().toISOString();
+        case 'airdate': return result.date ? new Date(result.date + 'T23:00:00').toISOString() : new Date().toISOString();
+        case 'after': return result.date || new Date().toISOString();
+        case 'custom': return null; // signals caller to open edit UI
+        default: return new Date().toISOString();
+    }
+}
+
 // ===== QUICK MARK =====
 async function quickMarkWatched(docId, seasonNum, episodeNum, isRewatchMode = false) {
     const item = myList.find(i => i.docId === docId); if (!item) return;
@@ -1539,6 +1601,29 @@ function showMarkPreviousConfirm(count) {
         const cleanup = () => { closeModal('confirm-dialog'); noBtn.style.cssText = ''; [yesBtn, noBtn, cancelBtn].forEach(b => { const c = b.cloneNode(true); b.replaceWith(c); }); if (closeBtn) { const c = closeBtn.cloneNode(true); closeBtn.replaceWith(c); } };
         yesBtn.addEventListener('click', () => { cleanup(); resolve('yes'); });
         noBtn.addEventListener('click', () => { cleanup(); resolve('no'); });
+        closeBtn?.addEventListener('click', () => { cleanup(); resolve('cancel'); });
+    });
+}
+
+function showRewatchSeasonConfirm() {
+    return new Promise(resolve => {
+        const dialog = document.getElementById('confirm-dialog');
+        document.getElementById('confirm-title').textContent = 'All Watched';
+        document.getElementById('confirm-message').textContent = 'This season has been rewatched. What to do?';
+        const yesBtn = document.getElementById('confirm-yes'), noBtn = document.getElementById('confirm-no');
+        const cancelBtn = document.getElementById('confirm-cancel'), closeBtn = dialog.querySelector('.confirm-close');
+        yesBtn.textContent = '↺ Rewatch Again'; noBtn.textContent = '✗ Unmark All'; cancelBtn.textContent = '↺ Undo Last Rewatch';
+        cancelBtn.style.display = 'inline-block';
+        yesBtn.className = 'confirm-btn'; yesBtn.style.cssText = 'background:var(--blue);color:white;';
+        noBtn.className = 'confirm-btn'; noBtn.style.cssText = 'background:var(--red);color:white;';
+        cancelBtn.className = 'confirm-btn'; cancelBtn.style.cssText = 'background:var(--orange);color:white;';
+        openModal('confirm-dialog');
+        const cleanup = () => { closeModal('confirm-dialog'); yesBtn.style.cssText = ''; noBtn.style.cssText = ''; cancelBtn.style.cssText = '';
+            [yesBtn, noBtn, cancelBtn].forEach(b => { const c = b.cloneNode(true); b.replaceWith(c); });
+            if (closeBtn) { const c = closeBtn.cloneNode(true); closeBtn.replaceWith(c); } };
+        yesBtn.addEventListener('click', () => { cleanup(); resolve('rewatch'); });
+        noBtn.addEventListener('click', () => { cleanup(); resolve('unmark'); });
+        cancelBtn.addEventListener('click', () => { cleanup(); resolve('undo-rewatch'); });
         closeBtn?.addEventListener('click', () => { cleanup(); resolve('cancel'); });
     });
 }
@@ -1853,9 +1938,7 @@ async function openTVDetails(item, body, safeDocId) {
     const regularSeasons = (item.seasons || []).filter(s => s.number !== 0);
     const season0 = (item.seasons || []).find(s => s.number === 0);
     const inlineSpecials = [];
-    regularSeasons.forEach(s => { s.episodes?.forEach(ep => { if (ep.is_special) inlineSpecials.push({ ...ep, fromSeason: s.number }); }); });
-    const allSpecials = [...(season0?.episodes || []), ...inlineSpecials];
-
+    regularSeasons.forEach(s => { s.episodes?.forEach(ep => { if (ep.is_special && !ep.is_significant_special) inlineSpecials.push({ ...ep, fromSeason: s.number }); }); });
     const seasonsHTML = regularSeasons.map(s => buildSeasonHTML(s, safeDocId, item.docId, item)).join('');
     const specialsHTML = allSpecials.length ? `<div class="season specials">
         <div class="season-header" onclick="toggleSeason(this,'${item.docId}',0)">
@@ -1901,6 +1984,7 @@ async function openTVDetails(item, body, safeDocId) {
                 ${item.is_anime ? '<span class="status-badge anime-badge">🎌 Anime</span>' : ''}
                 ${isRewatching ? '<span class="status-badge" style="background:#9C27B0;">↺ Rewatching</span>' : ''}
                 ${item.hide_from_list ? '<span class="restricted-inline-badge">R+</span>' : ''}
+                ${item.is_favorite ? '<span class="status-badge" style="background:#FFD700;color:#000;">⭐ Favorite</span>' : ''}
                 <span class="source-badge">${sourceLabel}</span>
             </div>
             ${rating ? `<p style="margin:4px 0;color:var(--text2);">⭐ <strong>${rating.toFixed(1)}</strong>/10 <small style="color:var(--text3);">TMDB</small></p>` : ''}
@@ -2304,8 +2388,7 @@ function toggleSeason(header, docId, seasonNum) { const body = header.nextElemen
 
 function buildSeasonHTML(season, safeDocId, docId, item) {
     const today = new Date(); today.setHours(23, 59, 59, 999);
-    const regularEps = (season.episodes || []).filter(ep => !ep.is_special && !isPlaceholderEpisode(ep));
-    const airedEps = regularEps.filter(ep => !ep.air_date || new Date(ep.air_date) <= today);
+    const regularEps = (season.episodes || []).filter(ep => (!ep.is_special || ep.is_significant_special) && !isPlaceholderEpisode(ep));    const airedEps = regularEps.filter(ep => !ep.air_date || new Date(ep.air_date) <= today);
     const watched = airedEps.filter(e => e.is_watched).length, total = airedEps.length;
     const allWatched = watched === total && total > 0;
     const key = seasonKey(docId, season.number), isExpanded = expandedSeasons.has(key);
@@ -2320,8 +2403,8 @@ function buildSeasonHTML(season, safeDocId, docId, item) {
         </div>
         <div class="season-body ${isExpanded ? 'open' : ''}">
             ${regularEps.map(ep => buildEpisodeHTML(ep, season.number, safeDocId, item)).join('') || '<p style="padding:10px;color:var(--text3);">No episodes</p>'}
-            ${(season.episodes || []).filter(ep => ep.is_special).length ? `<p style="color:var(--text3);font-size:11px;padding:8px 12px;font-style:italic;">${(season.episodes || []).filter(ep => ep.is_special).length} special(s) in Specials section</p>` : ''}
-        </div></div>`;
+            ${(season.episodes || []).filter(ep => ep.is_special && !ep.is_significant_special).length ? `<p style="color:var(--text3);font-size:11px;padding:8px 12px;font-style:italic;">${(season.episodes || []).filter(ep => ep.is_special && !ep.is_significant_special).length} special(s) in Specials section</p>` : ''}        
+            </div></div>`;
 }
 
 function buildEpisodeHTML(ep, seasonNum, safeDocId, item) {
@@ -2444,13 +2527,25 @@ async function markSeasonWatched(docId, seasonNum) {
     activeDetailTab = 'episodes-tab';
 
     if (allWatched) {
-        const a = await showConfirm('All Watched', 'What to do?', '↺ Rewatch All', '✗ Unmark All');
-        if (a === 'yes') {
+        const hasRewatches = regularEps.some(ep => (ep.rewatch_count || 0) > 0);
+        const a = hasRewatches
+            ? await showRewatchSeasonConfirm()
+            : await showConfirm('All Watched', 'What to do?', '↺ Rewatch All', '✗ Unmark All');
+
+        if (a === 'yes' || a === 'rewatch') {
             const ts = generateIncrementalTimestamps(regularEps.length, item.is_anime);
             regularEps.forEach((ep, idx) => { ep.rewatch_count = (ep.rewatch_count || 0) + 1; if (!ep.rewatch_history) ep.rewatch_history = []; ep.rewatch_history.push(ts[idx]); ep.watched_at = ts[idx]; });
-        } else if (a === 'no') { regularEps.forEach(ep => { ep.is_watched = false; ep.watched_at = null; }); }
-        else return;
-    } else {
+        } else if (a === 'no' || a === 'unmark') {
+            regularEps.forEach(ep => { ep.is_watched = false; ep.watched_at = null; });
+        } else if (a === 'undo-rewatch') {
+            regularEps.forEach(ep => {
+                if ((ep.rewatch_count || 0) > 0) {
+                    ep.rewatch_count--;
+                    if (ep.rewatch_history?.length) ep.rewatch_history.pop();
+                    if (ep.rewatch_history?.length) ep.watched_at = ep.rewatch_history[ep.rewatch_history.length - 1];
+                }
+            });
+        } else return;
         if (seasonNum !== 0) {
             const prevSeasons = item.seasons.filter(s => s.number !== 0 && s.number < seasonNum && s.episodes?.some(e => !e.is_watched && !e.is_special && !isPlaceholderEpisode(e)));
             if (prevSeasons.length > 0) {
@@ -3261,7 +3356,8 @@ window.toggleHideFromList = toggleHideFromList; window.toggleAllowMarkUnaired = 
 window.renderCollections = renderCollections; window.filterCollections = filterCollections;
 window.openCollection = openCollection; window.filterCollectionModal = filterCollectionModal;
 window.updateNavBadges = updateNavBadges; window.saveEpisodeNote = saveEpisodeNote;
-window.showEditWatchDateInline = showEditWatchDateInline; window.applyEditWatchDate = applyEditWatchDate;
+window.showEditWatchDateInline = showEditWatchDateInline; window.applyEditWatchDate = applyEditWatchDate; window.promptWatchDate = promptWatchDate;
+window.showRewatchSeasonConfirm = showRewatchSeasonConfirm;
 window.openEditDatesModal = openEditDatesModal; window.filterEditDatesList = filterEditDatesList;
 window.selectAllEditDates = selectAllEditDates; window.applyBulkEditDates = applyBulkEditDates;
 window.openFixShowModal = openFixShowModal; window.runFixShowSearch = runFixShowSearch;
