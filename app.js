@@ -133,10 +133,12 @@ function getEpisodeSource() { return localStorage.getItem('episodeSource') || 't
 function setEpisodeSource(src) {
     localStorage.setItem('episodeSource', src);
     updateSegmentedControl('episode-source-control', src);
-    // Swap active seasons for all shows
+    // Swap active seasons for all shows and persist
     myList.forEach(item => {
         if (item.type !== 'tv') return;
         swapActiveSeasons(item, src);
+        // Persist the swap to Firebase
+        updateDoc(doc(db, 'series', item.docId), { seasons: item.seasons }).catch(e => logError('Persist swap', e));
     });
     renderAllSections();
 }
@@ -241,7 +243,8 @@ function syncWatchDataAcross(fromSeasons, toSeasons, episodeMap, fromSource) {
     fromSeasons.forEach(fromSeason => {
         if (fromSeason.number === 0) return;
         (fromSeason.episodes || []).forEach(fromEp => {
-            if (fromEp.is_special) return;
+            // Skip season 0 specials (handled separately) but allow significant specials
+            if (fromEp.is_special && !fromEp.is_significant_special) return;
 
             // Find mapping
             let mapping;
@@ -394,8 +397,14 @@ async function tvmazeGetShow(item) {
 async function tvmazeGetEpisodes(tvmazeId) {
     return await tvmazeFetch(`${TVMAZE_BASE}/shows/${tvmazeId}/episodes?specials=1`);
 }
-async function tvmazeGetEpisodeDetail(tvmazeId, season, episode) {
-    const episodes = await tvmazeFetch(`${TVMAZE_BASE}/shows/${tvmazeId}/episodes`);
+async function tvmazeGetEpisodeDetail(tvmazeId, season, episode, tvmazeEpId) {
+    // Try direct episode ID first (most reliable)
+    if (tvmazeEpId) {
+        const ep = await tvmazeFetch(`${TVMAZE_BASE}/episodes/${tvmazeEpId}`);
+        if (ep) return ep;
+    }
+    // Fall back to searching by season+number
+    const episodes = await tvmazeFetch(`${TVMAZE_BASE}/shows/${tvmazeId}/episodes?specials=1`);
     if (!episodes) return null;
     return episodes.find(ep => ep.season === season && ep.number === episode) || null;
 }
@@ -428,17 +437,33 @@ function tvmazeMapCast(castArr) {
 // Group TVMaze episodes by season — includes specials
 function tvmazeGroupEpisodes(episodes) {
     const seasons = {};
-    const specials = [];
+    let specialCounter = 900; // synthetic numbers for null-numbered specials
     (episodes || []).forEach(ep => {
-        if (ep.type === 'insignificant_special' || (!ep.season && !ep.number)) {
-            specials.push({
-                number: ep.number || specials.length + 1,
-                name: ep.name || 'Special',
-                air_date: ep.airdate || null,
-                is_special: true, tvmaze_ep_id: ep.id
-            });
-            return;
-        }
+        const isSpecialType = ep.type === 'insignificant_special';
+        const hasNullNumber = ep.number === null || ep.number === undefined;
+
+        // Determine season
+        let s = ep.season || 0;
+
+        // If it has a season but null number, it's a significant special — keep in that season
+        const epNumber = hasNullNumber ? specialCounter++ : ep.number;
+        const isSpecial = isSpecialType || hasNullNumber || s === 0;
+
+        if (!seasons[s]) seasons[s] = [];
+        seasons[s].push({
+            number: epNumber,
+            name: ep.name || 'Special',
+            air_date: ep.airdate || null,
+            air_time: ep.airtime || null,
+            runtime: ep.runtime || null,
+            tvmaze_ep_id: ep.id,
+            is_special: isSpecial,
+            is_significant_special: hasNullNumber && s > 0,
+            original_number: ep.number // preserve original (null) for reference
+        });
+    });
+    return seasons;
+}
         const s = ep.season || 0;
         if (!seasons[s]) seasons[s] = [];
         seasons[s].push({
@@ -544,7 +569,10 @@ function buildTVMazeSeasonsWithWatchData(tvmazeGrouped, existingSeasons, episode
                 is_watched: existing?.is_watched || false, watched_at: existing?.watched_at || null,
                 rewatch_count: existing?.rewatch_count || 0, rewatch_history: existing?.rewatch_history || [],
                 is_special: tvEp.is_special || isSpecials,
-                my_rating: existing?.my_rating || null, note: existing?.note || null
+                is_significant_special: tvEp.is_significant_special || false,
+                my_rating: existing?.my_rating || null, note: existing?.note || null,
+                tvmaze_ep_id: tvEp.tvmaze_ep_id || null,
+                unconfirmed: false
             };
         });
 
@@ -1062,7 +1090,14 @@ function getMovies() { return myList.filter(i => i.type === 'movie'); }
 function getAiredEpisodesOnly(seasons) {
     const today = new Date(); today.setHours(23, 59, 59, 999);
     const aired = [];
-    (seasons || []).forEach(s => { if (s.number === 0) return; (s.episodes || []).forEach(ep => { if (ep.is_special || isPlaceholderEpisode(ep)) return; const air = ep.air_date ? new Date(ep.air_date) : null; if (!air || air <= today) aired.push({ ...ep, seasonNum: s.number }); }); });
+    (seasons || []).forEach(s => {
+        if (s.number === 0) return;
+        (s.episodes || []).forEach(ep => {
+            if (ep.is_special || ep.is_significant_special || isPlaceholderEpisode(ep)) return;
+            const air = ep.air_date ? new Date(ep.air_date) : null;
+            if (!air || air <= today) aired.push({ ...ep, seasonNum: s.number });
+        });
+    });
     return aired;
 }
 function getShowProgressExcludingSpecials(show) { const aired = getAiredEpisodesOnly(show.seasons); if (!aired.length) return 0; return (aired.filter(ep => ep.is_watched).length / aired.length) * 100; }
@@ -1070,7 +1105,16 @@ function getReWatchProgress(show) { const aired = getAiredEpisodesOnly(show.seas
 function getNextEpisodeExcludingSpecials(show) {
     const today = new Date(); today.setHours(23, 59, 59, 999);
     if (!show.seasons) return null;
-    for (const s of show.seasons) { if (s.number === 0) continue; for (const ep of (s.episodes || [])) { if (ep.is_special || isPlaceholderEpisode(ep)) continue; if (!ep.is_watched) return { season: s.number, number: ep.number, name: ep.name || `Episode ${ep.number}` }; } }
+    for (const s of show.seasons) {
+        if (s.number === 0) continue;
+        for (const ep of (s.episodes || [])) {
+            if (ep.is_special || ep.is_significant_special || isPlaceholderEpisode(ep)) continue;
+            // Only return aired episodes
+            const air = ep.air_date ? new Date(ep.air_date) : null;
+            if (air && air > today) continue;
+            if (!ep.is_watched) return { season: s.number, number: ep.number, name: ep.name || `Episode ${ep.number}` };
+        }
+    }
     return null;
 }
 function getNextReWatchEpisode(show) {
@@ -1751,7 +1795,14 @@ async function openMovieDetails(item, body, safeDocId) {
         </div>
     </div>
     <div class="synopsis"><h3>Synopsis</h3><p>${synopsis}</p></div>
-    ${buildCastSection(cast)}${buildNetworksSection(providerList, details?.production_companies || [])}${buildSimilarSection(simScored, 'movie')}`;
+        ${buildCastSection(cast)}${buildNetworksSection(providerList, details?.production_companies || [])}${buildSimilarSection(simScored, 'movie')}`;
+
+    // Save poster if detail page found one
+    const detailPoster = details?.poster_path ? TMDB_IMG_BASE + details.poster_path : null;
+    if (detailPoster && detailPoster !== item.poster) {
+        item.poster = detailPoster;
+        updateDoc(doc(db, 'movies', item.docId), { poster: detailPoster }).catch(() => {});
+    }
 }
 
 // ===== TV DETAIL =====
@@ -1893,9 +1944,15 @@ async function openTVDetails(item, body, safeDocId) {
         </div>
     </div>`;
 
-    setupDetailSwipe();
+        setupDetailSwipe();
     if (epRatings.length) renderEpisodeRatingsChart(epRatings);
     if (['Watching', 'Rewatching'].includes(item.user_status)) setTimeout(() => autoScrollToLastWatched(item), 150);
+
+    // Save poster if we got a better one
+    if (poster && poster !== item.poster && !poster.startsWith('data:')) {
+        item.poster = poster;
+        updateDoc(doc(db, 'series', item.docId), { poster }).catch(() => {});
+    }
 }
 
 // ===== AUTO-SCROLL =====
@@ -1965,7 +2022,13 @@ async function openEpisodeDetail(docId, seasonNum, episodeNum, isSpecial = false
         let displayData = { name: epName, overview: 'No synopsis.', vote_average: 0, air_date: null, runtime: null, still_url: null, still_path: null, guest_stars: [], credits: { cast: [] } };
 
         if (useTVMaze && item.tvmaze_id) {
-            const tvEp = await tvmazeGetEpisodeDetail(item.tvmaze_id, seasonNum, episodeNum);
+            // Find tvmaze_ep_id from stored episode data
+            const localSeason2 = item.seasons?.find(s => s.number === seasonNum);
+            let localEp2;
+            if (isSpecial && epName) localEp2 = localSeason2?.episodes?.find(e => e.number === episodeNum && e.is_special && titlesMatch(e.name || '', epName));
+            else localEp2 = localSeason2?.episodes?.find(e => e.number === episodeNum && !e.is_special);
+            const tvmazeEpId = localEp2?.tvmaze_ep_id || null;
+            const tvEp = await tvmazeGetEpisodeDetail(item.tvmaze_id, seasonNum, episodeNum, tvmazeEpId);
             if (tvEp) {
                 displayData = { name: tvEp.name || epName, overview: tvEp.summary ? tvEp.summary.replace(/<[^>]+>/g, '').trim() : 'No synopsis.', vote_average: tvEp.rating?.average || 0, air_date: tvEp.airdate || null, runtime: tvEp.runtime || null, still_url: tvEp.image?.original || tvEp.image?.medium || null, guest_stars: [], credits: { cast: [] } };
             }
@@ -1989,11 +2052,21 @@ async function openEpisodeDetail(docId, seasonNum, episodeNum, isSpecial = false
         const sd = docId.replace(/'/g, "\\'"), safeEpName = (epName || '').replace(/'/g, "\\'");
         const currentNote = localEp?.note || '';
 
-        const watchedDateHTML = localEp?.is_watched && localEp?.watched_at
-            ? `<div style="margin-top:8px;display:flex;align-items:center;gap:6px;">
-                <span style="color:var(--text3);font-size:12px;">Watched: ${formatDate(localEp.watched_at)}</span>
-                <button class="edit-date-btn" onclick="showEditWatchDateInline('${sd}',${seasonNum},${episodeNum},${isSpecial},'${safeEpName}')" title="Edit date">✏️</button>
-               </div>` : '';
+        let watchedDateHTML = '';
+        if (localEp?.is_watched && localEp?.watched_at) {
+            const allDates = [{ date: localEp.watched_at, label: 'First watch', cycle: 0 }];
+            (localEp.rewatch_history || []).forEach((rw, idx) => {
+                allDates.push({ date: rw, label: `Rewatch ${idx + 1}`, cycle: idx + 1 });
+            });
+
+            watchedDateHTML = `<div style="margin-top:8px;">
+                ${allDates.map((wd, idx) => `
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                        <span style="color:var(--text3);font-size:12px;">${wd.label}: ${formatDate(wd.date)}</span>
+                        <button class="edit-date-btn" onclick="showEditWatchDateInline('${sd}',${seasonNum},${episodeNum},${isSpecial},'${safeEpName}',${wd.cycle})" title="Edit date">✏️</button>
+                    </div>`).join('')}
+            </div>`;
+        }
 
         epBody.innerHTML = `<div class="ep-detail-header">
             ${still ? `<img src="${still}" onerror="this.style.display='none'">` : ''}
@@ -2038,33 +2111,64 @@ async function saveEpisodeNote(docId, seasonNum, episodeNum, isSpecial, epName) 
 }
 
 // ===== EDIT WATCH DATE — SINGLE =====
-function showEditWatchDateInline(docId, seasonNum, episodeNum, isSpecial, epName) {
+function showEditWatchDateInline(docId, seasonNum, episodeNum, isSpecial, epName, cycle = 0) {
     const area = document.getElementById('edit-date-inline-area'); if (!area) return;
     const item = myList.find(i => i.docId === docId); if (!item) return;
     const season = item.seasons.find(s => s.number === seasonNum); if (!season) return;
-    let ep; if (isSpecial && epName) ep = season.episodes.find(e => e.number === episodeNum && e.is_special && titlesMatch(e.name || '', epName));
-    else ep = season.episodes.find(e => e.number === episodeNum && !e.is_special); if (!ep) return;
-    const currentDate = ep.watched_at ? new Date(ep.watched_at).toISOString().split('T')[0] : '';
-    const currentTime = ep.watched_at ? new Date(ep.watched_at).toTimeString().substring(0, 5) : '23:00';
-    const sd = docId.replace(/'/g, "\\'"), safeEpName = (epName || '').replace(/'/g, "\\'");
+    let ep;
+    if (isSpecial && epName) ep = season.episodes.find(e => e.number === episodeNum && e.is_special && titlesMatch(e.name || '', epName));
+    else ep = season.episodes.find(e => e.number === episodeNum && !e.is_special);
+    if (!ep) return;
+
+    // Get the date for this specific cycle
+    let currentDateStr;
+    if (cycle === 0) {
+        currentDateStr = ep.watched_at;
+    } else {
+        currentDateStr = ep.rewatch_history?.[cycle - 1] || ep.watched_at;
+    }
+    const currentDate = currentDateStr ? new Date(currentDateStr).toISOString().split('T')[0] : '';
+    const currentTime = currentDateStr ? new Date(currentDateStr).toTimeString().substring(0, 5) : '23:00';
+    const sd = docId.replace(/'/g, "\\'"), safeEpName2 = (epName || '').replace(/'/g, "\\'");
+    const cycleLabel = cycle === 0 ? 'First Watch' : `Rewatch ${cycle}`;
+
     area.innerHTML = `<div style="margin:10px 0;padding:12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);">
-        <div style="font-size:13px;color:var(--text2);margin-bottom:8px;">Edit Watch Date &amp; Time</div>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:8px;">Edit Date — ${cycleLabel}</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <input type="date" id="edit-date-picker" class="edit-date-input" value="${currentDate}">
             <input type="time" id="edit-time-picker" class="edit-time-input" value="${currentTime}">
-            <button onclick="applyEditWatchDate('${sd}',${seasonNum},${episodeNum},${isSpecial},'${safeEpName}')" style="padding:8px 14px;background:var(--accent);color:white;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">Apply</button>
-            <button onclick="document.getElementById('edit-date-inline-area').innerHTML=''" style="padding:8px 14px;background:var(--surface);border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;color:var(--text);">Cancel</button>
+            <input type="hidden" id="edit-date-cycle" value="${cycle}">
+            <button onclick="applyEditWatchDate('${sd}',${seasonNum},${episodeNum},${isSpecial},'${safeEpName2}')"
+                style="padding:8px 14px;background:var(--accent);color:white;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;">Apply</button>
+            <button onclick="document.getElementById('edit-date-inline-area').innerHTML=''"
+                style="padding:8px 14px;background:var(--surface);border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;color:var(--text);">Cancel</button>
         </div></div>`;
 }
 
 async function applyEditWatchDate(docId, seasonNum, episodeNum, isSpecial, epName) {
     const item = myList.find(i => i.docId === docId); if (!item) return;
     const season = item.seasons.find(s => s.number === seasonNum); if (!season) return;
-    let ep; if (isSpecial && epName) ep = season.episodes.find(e => e.number === episodeNum && e.is_special && titlesMatch(e.name || '', epName));
-    else ep = season.episodes.find(e => e.number === episodeNum && !e.is_special); if (!ep) return;
+    let ep;
+    if (isSpecial && epName) ep = season.episodes.find(e => e.number === episodeNum && e.is_special && titlesMatch(e.name || '', epName));
+    else ep = season.episodes.find(e => e.number === episodeNum && !e.is_special);
+    if (!ep) return;
+
     const dp = document.getElementById('edit-date-picker'), tp = document.getElementById('edit-time-picker');
+    const cycleInput = document.getElementById('edit-date-cycle');
     if (!dp?.value) return;
-    ep.watched_at = new Date(`${dp.value}T${tp?.value || '23:00'}:00`).toISOString();
+    const newDate = new Date(`${dp.value}T${tp?.value || '23:00'}:00`).toISOString();
+    const cycle = parseInt(cycleInput?.value || '0');
+
+    if (cycle === 0) {
+        // Edit the first watch date
+        ep.watched_at = newDate;
+    } else {
+        // Edit a rewatch date
+        if (ep.rewatch_history && ep.rewatch_history.length >= cycle) {
+            ep.rewatch_history[cycle - 1] = newDate;
+        }
+    }
+
     try {
         await syncMarkToOtherStructure(item, getEpisodeSource());
         await saveDualSeasons(item);
@@ -2238,20 +2342,39 @@ function buildEpisodeHTML(ep, seasonNum, safeDocId, item) {
     const air = ep.air_date ? new Date(ep.air_date) : null;
     const isUnaired = air && air > today;
     const hasNote = ep.note && ep.note.trim().length > 0;
-    // Always allow tapping to view episode detail (even unaired)
-    const onclickStr = `openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number},false)`;
+    const isSignificantSpecial = ep.is_significant_special || false;
+    const safeEpName = (ep.name || '').replace(/'/g, "\\'");
+
+    // Display label
+    const epLabel = isSignificantSpecial
+        ? `<span class="special-tag">SPECIAL</span>`
+        : `<span class="episode-number">E${String(ep.number).padStart(2, '0')}</span> —`;
+
+    // Always tappable to view detail
+    const onclickStr = isSignificantSpecial
+        ? `openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number},true,'${safeEpName}')`
+        : `openEpisodeDetail('${safeDocId}',${seasonNum},${ep.number},false)`;
+
+    // Watch button: only for aired episodes (unaired can only be marked from detail page)
+    const showWatchBtn = !isUnaired;
+
+    // Toggle uses name for significant specials to disambiguate
+    const toggleStr = isSignificantSpecial
+        ? `toggleEpisode('${safeDocId}',${seasonNum},${ep.number},true,'${safeEpName}')`
+        : `toggleEpisode('${safeDocId}',${seasonNum},${ep.number},false)`;
 
     return `<div class="episode ${ep.is_watched ? 'watched' : ''}" onclick="${onclickStr}" style="${isUnaired ? 'opacity:0.5;' : ''}">
         <div class="episode-info">
-            <span class="episode-number">E${String(ep.number).padStart(2, '0')}</span>
-            — ${ep.name || 'Episode ' + ep.number}
+            ${epLabel} ${ep.name || 'Episode ' + ep.number}
             ${hasNote ? '<span class="episode-note-icon">📝</span>' : ''}
             ${isUnaired ? `<br><small style="color:var(--text3);">📅 Airs ${formatDate(ep.air_date)}</small>` : ''}
             ${ep.watched_at && !isUnaired ? `<br><small style="color:var(--text3);">${formatDate(ep.watched_at)}</small>` : ''}
             ${ep.is_watched && isUnaired ? '<br><small style="color:var(--green);">✓ Marked early</small>' : ''}
             ${ep.rewatch_count > 0 ? `<br><small style="color:#2196F3;">↺ ${ep.rewatch_count}x</small>` : ''}
         </div>
-        <button class="watch-btn ${ep.is_watched ? 'watched' : 'mark-watched'}" onclick="event.stopPropagation();toggleEpisode('${safeDocId}',${seasonNum},${ep.number},false)">${ep.is_watched ? '✓' : '○'}</button>
+        ${showWatchBtn
+            ? `<button class="watch-btn ${ep.is_watched ? 'watched' : 'mark-watched'}" onclick="event.stopPropagation();${toggleStr}">${ep.is_watched ? '✓' : '○'}</button>`
+            : '<div style="width:40px;"></div>'}
     </div>`;
 }
 
