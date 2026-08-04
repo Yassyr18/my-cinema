@@ -3081,16 +3081,6 @@ function buildSpecialEpisodeHTML(ep,safeDocId,docId){
         <button class="watch-btn ${ep.is_watched?'watched':'mark-watched'}" onclick="event.stopPropagation();toggleEpisode('${safeDocId}',${fetchSeason},${ep.number},true,'${safeEpName}')">${ep.is_watched?'✓':'○'}</button>
     </div>`;
 }
-// ===== DETAIL PAGE =====
-async function openDetails(docId, type, forceTab) {
-    const item = myList.find(i => i.docId === docId); if (!item) return;
-    const body = document.getElementById('modal-body');
-    body.innerHTML = '<p class="empty-state">Loading...</p>';
-    openModal('modal');
-    if (forceTab) activeDetailTab = forceTab;
-    if (type === 'movie') await openMovieDetails(item, body, docId.replace(/'/g,"\\'"));
-    else await openTVDetails(item, body, docId.replace(/'/g,"\\'"));
-}
 
 // ===== MY RATING WIDGET =====
 function buildMyRatingWidget(item, safeDocId) {
