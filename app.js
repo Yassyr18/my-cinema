@@ -464,19 +464,6 @@ function tvmazeGroupEpisodes(episodes) {
     });
     return seasons;
 }
-        const s = ep.season || 0;
-        if (!seasons[s]) seasons[s] = [];
-        seasons[s].push({
-            number: ep.number, name: ep.name || `Episode ${ep.number}`,
-            air_date: ep.airdate || null, air_time: ep.airtime || null,
-            runtime: ep.runtime || null, tvmaze_ep_id: ep.id
-        });
-    });
-    // Add specials as season 0
-    if (specials.length && !seasons[0]) seasons[0] = specials;
-    else if (specials.length) seasons[0] = [...(seasons[0] || []), ...specials];
-    return seasons;
-}
 
 // ===== FETCH AIR TIME DATA =====
 async function fetchAirTimeData(show) {
