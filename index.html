@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="My Cinema">
 
-    <!-- Favicon — inline SVG, no file needed -->
+    <!-- Favicon inline SVG -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231e3c72'/%3E%3Ctext x='32' y='46' text-anchor='middle' font-size='36' font-family='sans-serif'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
 
     <link rel="stylesheet" href="style.css">
@@ -69,18 +69,15 @@
 
         <div class="swipeable-tabs" id="anime-swipeable">
 
-            <!-- Continue -->
             <div class="sub-tab-content active" id="anime-continue">
                 <div id="anime-jump-pills"></div>
                 <div id="anime-continue-list"></div>
             </div>
 
-            <!-- History -->
             <div class="sub-tab-content" id="anime-history">
                 <div id="anime-history-list"></div>
             </div>
 
-            <!-- Upcoming -->
             <div class="sub-tab-content" id="anime-upcoming">
                 <h3 class="section-heading">📅 Today</h3>
                 <div id="anime-calendar-today" class="calendar-list">
@@ -93,7 +90,6 @@
                 <button class="refresh-btn" onclick="loadSectionCalendar('anime')">🔄 Refresh</button>
             </div>
 
-            <!-- Library -->
             <div class="sub-tab-content" id="anime-library">
                 <div class="library-controls">
                     <select id="anime-sort" onchange="renderLibrary('anime')">
@@ -131,18 +127,15 @@
 
         <div class="swipeable-tabs" id="tv-swipeable">
 
-            <!-- Continue -->
             <div class="sub-tab-content active" id="tv-continue">
                 <div id="tv-jump-pills"></div>
                 <div id="tv-continue-list"></div>
             </div>
 
-            <!-- History -->
             <div class="sub-tab-content" id="tv-history">
                 <div id="tv-history-list"></div>
             </div>
 
-            <!-- Upcoming -->
             <div class="sub-tab-content" id="tv-upcoming">
                 <h3 class="section-heading">📅 Today</h3>
                 <div id="tv-calendar-today" class="calendar-list">
@@ -155,7 +148,6 @@
                 <button class="refresh-btn" onclick="loadSectionCalendar('tv')">🔄 Refresh</button>
             </div>
 
-            <!-- Library -->
             <div class="sub-tab-content" id="tv-library">
                 <div class="library-controls">
                     <select id="tv-sort" onchange="renderLibrary('tv')">
@@ -187,7 +179,7 @@
         <div class="section-sub-tabs" id="movies-sub-tabs">
             <button class="sub-tab-btn active" data-subtab="movies-watched"   data-index="0">Watched</button>
             <button class="sub-tab-btn" data-subtab="movies-unwatched" data-index="1">Unwatched</button>
-            <button class="sub-tab-btn" data-subtab="movies-library"  data-index="2">Library</button>
+            <button class="sub-tab-btn" data-subtab="movies-library"   data-index="2">Library</button>
         </div>
 
         <div class="swipeable-tabs" id="movies-swipeable">
@@ -352,7 +344,7 @@
                     <div class="settings-row-label">Card Style</div>
                     <div class="segmented-control" id="card-style-control">
                         <button class="segment-btn" data-val="compact" onclick="setCardStyle('compact')">Compact</button>
-                        <button class="segment-btn active" data-val="normal"  onclick="setCardStyle('normal')">Normal</button>
+                        <button class="segment-btn active" data-val="normal" onclick="setCardStyle('normal')">Normal</button>
                     </div>
                 </div>
 
@@ -386,7 +378,7 @@
             <div class="settings-group-content">
                 <button class="settings-action-btn" onclick="rescanAnime()">
                     🎌 Re-scan Anime Tags
-                    <div class="settings-btn-desc">Re-detect anime from TMDB genres and networks</div>
+                    <div class="settings-btn-desc">Re-detect anime from genres and networks</div>
                 </button>
                 <button class="settings-action-btn" onclick="autoTagStatuses()">
                     🏷️ Auto-tag Statuses
@@ -398,7 +390,7 @@
                 </button>
                 <button class="settings-action-btn" onclick="openRateShowsModal()">
                     ⭐ Rate Library
-                    <div class="settings-btn-desc">Rate your anime, shows &amp; movies</div>
+                    <div class="settings-btn-desc">Rate your anime, shows &amp; movies to improve recommendations</div>
                 </button>
             </div>
         </div>
@@ -413,7 +405,7 @@
 
                 <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;padding-bottom:16px;">
                     <div class="settings-row-label">Episode Schedule Source</div>
-                    <div class="settings-row-desc">TVMaze has more accurate air dates for anime</div>
+                    <div class="settings-row-desc">TVMaze has accurate air dates and times. TMDB is the fallback.</div>
                     <div class="segmented-control" id="episode-source-control" style="margin-top:6px;">
                         <button class="segment-btn" data-val="tmdb"   onclick="setEpisodeSource('tmdb')">TMDB</button>
                         <button class="segment-btn active" data-val="tvmaze" onclick="setEpisodeSource('tvmaze')">TVMaze</button>
@@ -422,15 +414,19 @@
 
                 <button class="settings-action-btn" onclick="syncAiringShows(false)">
                     🔄 Sync Airing Shows
-                    <div class="settings-btn-desc">Updates episodes and air times for airing shows</div>
+                    <div class="settings-btn-desc">Updates episodes and air times for currently airing shows</div>
                 </button>
                 <button class="settings-action-btn" onclick="fullLibrarySync()">
                     🔄 Full Library Sync
-                    <div class="settings-btn-desc">Complete sync of all shows. Also enriches genres, languages, years. Takes longer.</div>
+                    <div class="settings-btn-desc">Syncs all shows and enriches missing genres, languages, years. Takes longer.</div>
+                </button>
+                <button class="settings-action-btn" onclick="fetchMissingTVDBIds()">
+                    🔑 Fetch Missing IDs
+                    <div class="settings-btn-desc">Find TVDB and TVMaze IDs for shows that are missing them</div>
                 </button>
                 <button class="settings-action-btn" onclick="generateErrorLog()">
                     📋 Download Error Log
-                    <div class="settings-btn-desc">Download a log of any errors that occurred</div>
+                    <div class="settings-btn-desc">Download a log of any errors that occurred this session</div>
                 </button>
 
                 <div id="settings-action-status" style="margin-top:10px;"></div>
@@ -454,7 +450,6 @@
                     <button class="export-btn" onclick="exportData('trakt')">📤 Trakt JSON</button>
                 </div>
 
-                <!-- Import (collapsible) -->
                 <div id="import-section">
                     <h4 style="color:var(--text);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px;cursor:pointer;"
                         onclick="toggleImportSection()">
@@ -485,7 +480,7 @@
                 <span class="settings-arrow">▼</span>
             </div>
             <div class="settings-group-content">
-                <p style="color:var(--text2);font-size:13px;">My Cinema Tracker v5.3</p>
+                <p style="color:var(--text2);font-size:13px;">My Cinema Tracker v5.4</p>
                 <p style="color:var(--text2);font-size:13px;margin-top:6px;">Built with TMDB, TVMaze &amp; Firebase</p>
             </div>
         </div>
@@ -494,7 +489,9 @@
 
 </div><!-- end main-content -->
 
-<!-- ===== STATS MODAL ===== -->
+<!-- ===== MODALS — placed after main content ===== -->
+
+<!-- Stats Modal -->
 <div id="stats-modal" class="modal">
     <div class="modal-content" style="max-width:900px;">
         <span class="close" onclick="closeModal('stats-modal')">&times;</span>
@@ -502,7 +499,7 @@
     </div>
 </div>
 
-<!-- ===== BULK EDIT MODAL ===== -->
+<!-- Bulk Edit Modal -->
 <div id="bulk-modal" class="modal">
     <div class="modal-content" style="max-width:700px;">
         <span class="close" onclick="closeModal('bulk-modal')">&times;</span>
@@ -510,7 +507,7 @@
     </div>
 </div>
 
-<!-- ===== COLLECTION MODAL ===== -->
+<!-- Collection Modal -->
 <div id="collection-modal" class="modal">
     <div class="modal-content" style="max-width:900px;">
         <span class="close" onclick="closeModal('collection-modal')">&times;</span>
@@ -544,7 +541,9 @@
     </button>
 </nav>
 
-<!-- ===== MAIN DETAIL MODAL ===== -->
+<!-- ===== DETAIL MODALS — after nav so z-index works ===== -->
+
+<!-- Main Detail Modal -->
 <div id="modal" class="modal">
     <div class="modal-content detail-modal">
         <span class="close">&times;</span>
@@ -552,7 +551,7 @@
     </div>
 </div>
 
-<!-- ===== EPISODE DETAIL MODAL ===== -->
+<!-- Episode Detail Modal -->
 <div id="episode-modal" class="modal">
     <div class="modal-content" style="max-width:600px;">
         <span class="close" onclick="closeModal('episode-modal')">&times;</span>
@@ -560,7 +559,7 @@
     </div>
 </div>
 
-<!-- ===== PREVIEW MODAL ===== -->
+<!-- Preview Modal -->
 <div id="preview-modal" class="modal">
     <div class="modal-content detail-modal">
         <span class="close" onclick="closeModal('preview-modal')">&times;</span>
@@ -568,12 +567,12 @@
     </div>
 </div>
 
-<!-- ===== CONFIRM DIALOG ===== -->
+<!-- Confirm Dialog — highest z-index -->
 <div id="confirm-dialog" class="modal" style="display:none;">
     <div class="modal-content" style="max-width:400px;text-align:center;position:relative;">
         <button class="confirm-close" onclick="closeModal('confirm-dialog')">✕</button>
         <h3 id="confirm-title" style="margin-bottom:15px;"></h3>
-        <p id="confirm-message" style="margin-bottom:20px;color:var(--text2);"></p>
+        <p id="confirm-message" style="margin-bottom:20px;color:var(--text2);white-space:pre-line;"></p>
         <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
             <button id="confirm-yes"    class="confirm-btn confirm-yes">Yes</button>
             <button id="confirm-no"     class="confirm-btn confirm-no">No</button>
