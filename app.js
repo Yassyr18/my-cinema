@@ -1939,6 +1939,7 @@ async function openTVDetails(item, body, safeDocId) {
     const season0 = (item.seasons || []).find(s => s.number === 0);
     const inlineSpecials = [];
     regularSeasons.forEach(s => { s.episodes?.forEach(ep => { if (ep.is_special && !ep.is_significant_special) inlineSpecials.push({ ...ep, fromSeason: s.number }); }); });
+    const allSpecials = [...(season0?.episodes || []), ...inlineSpecials];
     const seasonsHTML = regularSeasons.map(s => buildSeasonHTML(s, safeDocId, item.docId, item)).join('');
     const specialsHTML = allSpecials.length ? `<div class="season specials">
         <div class="season-header" onclick="toggleSeason(this,'${item.docId}',0)">
