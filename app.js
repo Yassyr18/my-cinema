@@ -434,17 +434,19 @@ function tvmazeMapCast(castArr) {
 // Group TVMaze episodes by season — includes specials
 function tvmazeGroupEpisodes(episodes) {
     const seasons = {};
-    let specialCounter = 900; // synthetic numbers for null-numbered specials
+    let specialCounter = 900;
     (episodes || []).forEach(ep => {
-        const isSpecialType = ep.type === 'insignificant_special';
         const hasNullNumber = ep.number === null || ep.number === undefined;
+        const epType = ep.type || 'regular';
 
-        // Determine season
         let s = ep.season || 0;
-
-        // If it has a season but null number, it's a significant special — keep in that season
         const epNumber = hasNullNumber ? specialCounter++ : ep.number;
-        const isSpecial = isSpecialType || hasNullNumber || s === 0;
+
+        const isInsignificant = epType === 'insignificant_special';
+        const isSignificant = epType === 'significant_special';
+
+        // Insignificant specials go to season 0 (specials group)
+        if (isInsignificant) s = 0;
 
         if (!seasons[s]) seasons[s] = [];
         seasons[s].push({
@@ -454,9 +456,10 @@ function tvmazeGroupEpisodes(episodes) {
             air_time: ep.airtime || null,
             runtime: ep.runtime || null,
             tvmaze_ep_id: ep.id,
-            is_special: isSpecial,
-            is_significant_special: hasNullNumber && s > 0,
-            original_number: ep.number // preserve original (null) for reference
+            is_special: isInsignificant || isSignificant || s === 0,
+            is_significant_special: isSignificant,
+            is_insignificant_special: isInsignificant,
+            original_number: ep.number
         });
     });
     return seasons;
@@ -554,6 +557,7 @@ function buildTVMazeSeasonsWithWatchData(tvmazeGrouped, existingSeasons, episode
                 rewatch_count: existing?.rewatch_count || 0, rewatch_history: existing?.rewatch_history || [],
                 is_special: tvEp.is_special || isSpecials,
                 is_significant_special: tvEp.is_significant_special || false,
+                is_insignificant_special: tvEp.is_insignificant_special || false,
                 my_rating: existing?.my_rating || null, note: existing?.note || null,
                 tvmaze_ep_id: tvEp.tvmaze_ep_id || null,
                 unconfirmed: false
@@ -763,7 +767,7 @@ async function syncShowWithTMDB(show, det) {
     const newSeasons = [];
     for (let s = 0; s <= det.number_of_seasons; s++) {
         // Skip season 0 if show has no specials season on TMDB
-        if (s === 0 && !det.seasons?.some(se => se.season_number === 0)) continue;
+        if (!det.seasons?.some(se => se.season_number === s)) continue;
         try {
             const sd = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}/season/${s}?api_key=${TMDB_API_KEY}`);
             if (!sd.episodes?.length) continue;
@@ -1079,7 +1083,7 @@ function getAiredEpisodesOnly(seasons) {
     (seasons || []).forEach(s => {
         if (s.number === 0) return;
         (s.episodes || []).forEach(ep => {
-            if (ep.is_special || ep.is_significant_special || isPlaceholderEpisode(ep)) return;
+            if (ep.is_special || ep.is_significant_special || ep.is_insignificant_special || isPlaceholderEpisode(ep)) return;
             const air = ep.air_date ? new Date(ep.air_date) : null;
             if (!air || air <= today) aired.push({ ...ep, seasonNum: s.number });
         });
@@ -1094,7 +1098,7 @@ function getNextEpisodeExcludingSpecials(show) {
     for (const s of show.seasons) {
         if (s.number === 0) continue;
         for (const ep of (s.episodes || [])) {
-            if (ep.is_special || ep.is_significant_special || isPlaceholderEpisode(ep)) continue;
+            if (ep.is_special || ep.is_significant_special || ep.is_insignificant_special || isPlaceholderEpisode(ep)) continue;
             // Only return aired episodes
             const air = ep.air_date ? new Date(ep.air_date) : null;
             if (air && air > today) continue;
@@ -1938,7 +1942,7 @@ async function openTVDetails(item, body, safeDocId) {
     const regularSeasons = (item.seasons || []).filter(s => s.number !== 0);
     const season0 = (item.seasons || []).find(s => s.number === 0);
     const inlineSpecials = [];
-    regularSeasons.forEach(s => { s.episodes?.forEach(ep => { if (ep.is_special && !ep.is_significant_special) inlineSpecials.push({ ...ep, fromSeason: s.number }); }); });
+    regularSeasons.forEach(s => { s.episodes?.forEach(ep => { if (ep.is_insignificant_special) inlineSpecials.push({ ...ep, fromSeason: s.number }); }); });
     const allSpecials = [...(season0?.episodes || []), ...inlineSpecials];
     const seasonsHTML = regularSeasons.map(s => buildSeasonHTML(s, safeDocId, item.docId, item)).join('');
     const specialsHTML = allSpecials.length ? `<div class="season specials">
@@ -2389,7 +2393,12 @@ function toggleSeason(header, docId, seasonNum) { const body = header.nextElemen
 
 function buildSeasonHTML(season, safeDocId, docId, item) {
     const today = new Date(); today.setHours(23, 59, 59, 999);
-    const regularEps = (season.episodes || []).filter(ep => (!ep.is_special || ep.is_significant_special) && !isPlaceholderEpisode(ep));    const airedEps = regularEps.filter(ep => !ep.air_date || new Date(ep.air_date) <= today);
+    const regularEps = (season.episodes || []).filter(ep => {
+        if (isPlaceholderEpisode(ep)) return false;
+        if (ep.is_insignificant_special) return false;
+        // Regular episodes + significant specials stay in season
+        return !ep.is_special || ep.is_significant_special;
+    });
     const watched = airedEps.filter(e => e.is_watched).length, total = airedEps.length;
     const allWatched = watched === total && total > 0;
     const key = seasonKey(docId, season.number), isExpanded = expandedSeasons.has(key);
@@ -2404,7 +2413,7 @@ function buildSeasonHTML(season, safeDocId, docId, item) {
         </div>
         <div class="season-body ${isExpanded ? 'open' : ''}">
             ${regularEps.map(ep => buildEpisodeHTML(ep, season.number, safeDocId, item)).join('') || '<p style="padding:10px;color:var(--text3);">No episodes</p>'}
-            ${(season.episodes || []).filter(ep => ep.is_special && !ep.is_significant_special).length ? `<p style="color:var(--text3);font-size:11px;padding:8px 12px;font-style:italic;">${(season.episodes || []).filter(ep => ep.is_special && !ep.is_significant_special).length} special(s) in Specials section</p>` : ''}        
+            ${(season.episodes || []).filter(ep => ep.is_insignificant_special).length ? `<p style="color:var(--text3);font-size:11px;padding:8px 12px;font-style:italic;">${(season.episodes || []).filter(ep => ep.is_insignificant_special).length} special(s) in Specials section</p>` : ''}
             </div></div>`;
 }
 
