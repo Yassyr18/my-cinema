@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#1e3c72"/>
+  <rect x="80" y="160" width="352" height="240" rx="20" fill="none" stroke="#ffffff" stroke-width="12"/>
+  <rect x="96" y="180" width="28" height="40" rx="6" fill="#ffffff" opacity="0.9"/>
+  <rect x="96" y="240" width="28" height="40" rx="6" fill="#ffffff" opacity="0.9"/>
+  <rect x="96" y="300" width="28" height="40" rx="6" fill="#ffffff" opacity="0.9"/>
+  <rect x="388" y="180" width="28" height="40" rx="6" fill="#ffffff" opacity="0.9"/>
+  <rect x="388" y="240" width="28" height="40" rx="6" fill="#ffffff" opacity="0.9"/>
+  <rect x="388" y="300" width="28" height="40" rx="6" fill="#ffffff" opacity="0.9"/>
+  <polygon points="210,210 210,350 350,280" fill="#ffffff" opacity="0.95"/>
+  <rect x="80" y="120" width="352" height="55" rx="12" fill="#2a5298"/>
+  <line x1="150" y1="120" x2="150" y2="175" stroke="#ffffff" stroke-width="6" opacity="0.6"/>
+  <line x1="220" y1="120" x2="220" y2="175" stroke="#ffffff" stroke-width="6" opacity="0.6"/>
+  <line x1="290" y1="120" x2="290" y2="175" stroke="#ffffff" stroke-width="6" opacity="0.6"/>
+  <line x1="360" y1="120" x2="360" y2="175" stroke="#ffffff" stroke-width="6" opacity="0.6"/>
+</svg>
