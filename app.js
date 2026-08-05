@@ -2399,6 +2399,7 @@ function buildSeasonHTML(season, safeDocId, docId, item) {
         // Regular episodes + significant specials stay in season
         return !ep.is_special || ep.is_significant_special;
     });
+    const airedEps = regularEps.filter(ep => !ep.air_date || new Date(ep.air_date) <= today);
     const watched = airedEps.filter(e => e.is_watched).length, total = airedEps.length;
     const allWatched = watched === total && total > 0;
     const key = seasonKey(docId, season.number), isExpanded = expandedSeasons.has(key);
