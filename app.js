@@ -752,6 +752,8 @@ async function syncAiringShows(silent = false) {
             updated++;
 
             await new Promise(r => setTimeout(r, 400));
+            // Pause every 10 shows to prevent Firebase write exhaustion
+            if (synced % 10 === 0) await new Promise(r => setTimeout(r, 2000));
         } catch (e) { logError(`Sync ${show.title}`, e); }
     }
 
@@ -3367,20 +3369,7 @@ window.toggleHideFromList = toggleHideFromList; window.toggleAllowMarkUnaired = 
 window.renderCollections = renderCollections; window.filterCollections = filterCollections;
 window.openCollection = openCollection; window.filterCollectionModal = filterCollectionModal;
 window.updateNavBadges = updateNavBadges; window.saveEpisodeNote = saveEpisodeNote;
-window.showEditWatchDateInline = showEditWatchDateInline; window.applyEditWatchDate = applyEditWatchDate; window.promptWatchDate = promptWatchDate; window.debugSpecials = () => {
-    const testShow = myList.find(i => i.seasons?.some(s => s.episodes?.some(e => e.is_special)));
-    if (testShow) {
-        console.log('Show:', testShow.title);
-        testShow.seasons?.forEach(s => {
-            const specials = s.episodes?.filter(e => e.is_special) || [];
-            const sigSpecials = s.episodes?.filter(e => e.is_significant_special) || [];
-            if (specials.length || sigSpecials.length) {
-                console.log(`Season ${s.number}: ${specials.length} is_special, ${sigSpecials.length} is_significant_special`);
-                specials.forEach(ep => console.log(`  E${ep.number} "${ep.name}" is_special=${ep.is_special} is_significant_special=${ep.is_significant_special}`));
-            }
-        });
-    } else { console.log('No shows with specials found'); }
-};
+window.showEditWatchDateInline = showEditWatchDateInline; window.applyEditWatchDate = applyEditWatchDate; window.promptWatchDate = promptWatchDate;
 window.showRewatchSeasonConfirm = showRewatchSeasonConfirm;
 window.openEditDatesModal = openEditDatesModal; window.filterEditDatesList = filterEditDatesList;
 window.selectAllEditDates = selectAllEditDates; window.applyBulkEditDates = applyBulkEditDates;
