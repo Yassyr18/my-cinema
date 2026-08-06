@@ -41,6 +41,7 @@ function safePoster(url, type) {
 
 // ===== STATE =====
 let myList = [];
+let activeCharts = {}; // tracks Chart.js instances so we can destroy them before recreating
 let currentSearchType       = 'multi';
 let currentSection          = 'anime';
 let isLoading               = false;
@@ -123,22 +124,14 @@ async function tvmazeFetch(url) {
         const res = await fetch(url);
         if (!res.ok) return null;
         const data = await res.json();
+        // Cap cache at 200 entries — remove oldest if over limit
+        const keys = Object.keys(tvmazeCache);
+        if (keys.length >= 200) {
+            delete tvmazeCache[keys[0]]; // remove oldest entry
+        }
         tvmazeCache[url] = data;
         return data;
     } catch (e) { logError('TVMaze fetch', e); return null; }
-}
-
-// ===== EPISODE SOURCE =====
-function getEpisodeSource() { return localStorage.getItem('episodeSource') || 'tvmaze'; }
-function setEpisodeSource(src) {
-    localStorage.setItem('episodeSource', src);
-    updateSegmentedControl('episode-source-control', src);
-    // Swap active seasons in memory only — Firebase updates on next sync
-    myList.forEach(item => {
-        if (item.type !== 'tv') return;
-        swapActiveSeasons(item, src);
-    });
-    renderAllSections();
 }
 
 // ===== DUAL SEASON STRUCTURE — CORE =====
@@ -236,14 +229,34 @@ function buildEpisodeMap(tmdbSeasons, tvmazeSeasons) {
 
 // Sync watch data from one structure to the other using the episode map
 function syncWatchDataAcross(fromSeasons, toSeasons, episodeMap, fromSource) {
-    if (!fromSeasons || !toSeasons || !episodeMap) return;
+    if (!fromSeasons || !toSeasons) return;
 
     fromSeasons.forEach(fromSeason => {
         if (fromSeason.number === 0) return;
         (fromSeason.episodes || []).forEach(fromEp => {
-            // Allow all specials to sync (both significant and insignificant)
-            
-            // Find mapping
+
+            // Handle SPECIALS — sync by name match since they don't have reliable numbers
+            if (fromEp.is_special || fromEp.is_significant_special || fromEp.is_insignificant_special) {
+                // Find matching special in target by name similarity
+                toSeasons.forEach(toSeason => {
+                    const matchingSpecial = toSeason.episodes?.find(e =>
+                        (e.is_special || e.is_significant_special || e.is_insignificant_special) &&
+                        titlesMatch(e.name || '', fromEp.name || '')
+                    );
+                    if (matchingSpecial) {
+                        matchingSpecial.is_watched = fromEp.is_watched;
+                        matchingSpecial.watched_at = fromEp.watched_at;
+                        matchingSpecial.rewatch_count = fromEp.rewatch_count || 0;
+                        matchingSpecial.rewatch_history = fromEp.rewatch_history || [];
+                        matchingSpecial.my_rating = fromEp.my_rating;
+                        matchingSpecial.note = fromEp.note;
+                    }
+                });
+                return;
+            }
+
+            // Handle REGULAR episodes — use episode map
+            if (!episodeMap) return;
             let mapping;
             if (fromSource === 'tmdb') {
                 mapping = episodeMap.find(m => m.tmdb_s === fromSeason.number && m.tmdb_e === fromEp.number);
@@ -252,7 +265,6 @@ function syncWatchDataAcross(fromSeasons, toSeasons, episodeMap, fromSource) {
             }
             if (!mapping) return;
 
-            // Find target episode
             const targetS = fromSource === 'tmdb' ? mapping.tvmaze_s : mapping.tmdb_s;
             const targetE = fromSource === 'tmdb' ? mapping.tvmaze_e : mapping.tmdb_e;
             const targetSeason = toSeasons.find(s => s.number === targetS);
@@ -260,7 +272,6 @@ function syncWatchDataAcross(fromSeasons, toSeasons, episodeMap, fromSource) {
             const targetEp = targetSeason.episodes?.find(e => e.number === targetE && !e.is_special);
             if (!targetEp) return;
 
-            // Copy watch data
             targetEp.is_watched = fromEp.is_watched;
             targetEp.watched_at = fromEp.watched_at;
             targetEp.rewatch_count = fromEp.rewatch_count || 0;
@@ -305,32 +316,37 @@ async function saveDualSeasons(item) {
 
 // ===== INCREMENTAL TIMESTAMPS WITH DAY CAP =====
 function generateIncrementalTimestamps(count, isAnime, baseDate) {
+    // baseDate = when the LAST (most recent) episode was watched
+    // We work backwards from there
     const base = baseDate ? new Date(baseDate) : new Date();
-    const gap = isAnime ? ANIME_EP_MINUTES : TV_EP_MINUTES;
+    const gapMinutes = isAnime ? ANIME_EP_MINUTES : TV_EP_MINUTES;
     const maxPerDay = isAnime ? ANIME_EPS_PER_DAY : TV_EPS_PER_DAY;
 
     const ts = [];
 
+    // Build timestamps going backwards from base
+    // Episode [count-1] = base (the last/most recent episode)
+    // Episode [count-2] = base - gapMinutes
+    // Episode [0] = earliest
     for (let i = 0; i < count; i++) {
-        // Which "day block" does this episode fall into?
+        // i=0 is the LAST episode (base date), i=count-1 is the FIRST episode (earliest)
+        const totalMinutesBack = i * gapMinutes;
         const dayOffset = Math.floor(i / maxPerDay);
         const posInDay = i % maxPerDay;
 
-        // Each day starts at baseDate minus dayOffset days
-        // Episodes within a day are spread by gap minutes starting from the end of the day going backwards
+        // Start from base, go back by full days first
         const dayBase = new Date(base);
         dayBase.setDate(dayBase.getDate() - dayOffset);
 
-        // Last episode in the day block = close to the base time
-        // Earlier episodes = earlier in the day
-        const epsInThisDayBlock = Math.min(maxPerDay, count - dayOffset * maxPerDay);
-        const minuteOffset = (epsInThisDayBlock - 1 - posInDay) * gap;
+        // Within the day, spread episodes backwards from dayBase time
+        const minutesBackInDay = posInDay * gapMinutes;
+        const epTime = new Date(dayBase.getTime() - minutesBackInDay * 60000);
 
-        const epTime = new Date(dayBase.getTime() - minuteOffset * 60000);
         ts.push(epTime.toISOString());
     }
 
-    // Reverse so first episode = earliest timestamp, last = latest
+    // ts[0] = most recent (last episode), ts[count-1] = earliest (first episode)
+    // Reverse so ts[0] = earliest, ts[count-1] = most recent
     ts.reverse();
     return ts;
 }
@@ -753,7 +769,7 @@ async function syncAiringShows(silent = false) {
 
             await new Promise(r => setTimeout(r, 400));
             // Pause every 10 shows to prevent Firebase write exhaustion
-            if (synced % 10 === 0) await new Promise(r => setTimeout(r, 2000));
+            if (updated % 10 === 0) await new Promise(r => setTimeout(r, 2000));
         } catch (e) { logError(`Sync ${show.title}`, e); }
     }
 
@@ -1532,17 +1548,36 @@ async function quickMarkWatched(docId, seasonNum, episodeNum, isRewatchMode = fa
         const prev = getPreviousUnwatchedEpisodes(item, seasonNum, episodeNum);
         if (prev.length > 0) {
             const a = await showMarkPreviousConfirm(prev.length);
+            if (a === 'cancel') return;
+
             if (a === 'yes') {
-                const ts = generateIncrementalTimestamps(prev.length + 1, item.is_anime);
-                prev.forEach(({ seasonNum: sN, episodeNum: eN }, idx) => { const s = item.seasons.find(s => s.number === sN); const e = s?.episodes.find(e => e.number === eN && !e.is_special); if (e) { e.is_watched = true; e.watched_at = ts[idx]; } });
-                ep.is_watched = true; ep.watched_at = ts[ts.length - 1];
-            } else if (a === 'no') { ep.is_watched = true; ep.watched_at = new Date().toISOString(); }
-            else return;
-        } else { ep.is_watched = true; ep.watched_at = new Date().toISOString(); }
+                // Collect previous episodes + this one
+                const allEps = [];
+                prev.forEach(({ seasonNum: sN, episodeNum: eN }) => {
+                    const s = item.seasons.find(s => s.number === sN);
+                    const e = s?.episodes.find(e => e.number === eN && !e.is_special);
+                    if (e) allEps.push(e);
+                });
+                allEps.push(ep);
+
+                // Ask for watch date choice
+                const dateChoice = await promptSeasonWatchDate(allEps, item.is_anime);
+                if (dateChoice.type === 'cancel') return;
+
+                allEps.forEach(e => { e.is_watched = true; });
+                applyWatchDateChoice(allEps, dateChoice, item.is_anime);
+
+            } else if (a === 'no') {
+                ep.is_watched = true;
+                ep.watched_at = new Date().toISOString();
+            }
+        } else {
+            ep.is_watched = true;
+            ep.watched_at = new Date().toISOString();
+        }
     }
 
     try {
-        // Sync to other structure
         await syncMarkToOtherStructure(item, getEpisodeSource());
         await saveDualSeasons(item);
         const section = item.is_anime ? 'anime' : 'tv';
@@ -2069,8 +2104,10 @@ async function fetchEpisodeRatings(tmdbId, localSeasons) {
 function buildEpisodeRatingsChart(ratings) { if (!ratings.length) return ''; return `<div class="chart-container"><h3>📊 Episode Ratings</h3><canvas id="episode-ratings-chart"></canvas></div>`; }
 function renderEpisodeRatingsChart(ratings) {
     const canvas = document.getElementById('episode-ratings-chart'); if (!canvas) return;
+    // Destroy existing chart on this canvas if there is one
+    if (activeCharts['episode-ratings']) { activeCharts['episode-ratings'].destroy(); delete activeCharts['episode-ratings']; }
     const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'];
-    new Chart(canvas.getContext('2d'), { type: 'bar', data: { labels: ratings.map(r => r.label), datasets: [{ data: ratings.map(r => r.rating), backgroundColor: ratings.map(r => colors[(r.season - 1) % colors.length] + '99'), borderColor: ratings.map(r => colors[(r.season - 1) % colors.length]), borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { title: i => `${ratings[i[0].dataIndex].label} - ${ratings[i[0].dataIndex].name}`, label: i => `${i.raw.toFixed(1)}/10` } } }, scales: { y: { min: 0, max: 10 }, x: { ticks: { maxRotation: 90, font: { size: 9 } } } } } });
+    activeCharts['episode-ratings'] = new Chart(canvas.getContext('2d'), { type: 'bar', data: { labels: ratings.map(r => r.label), datasets: [{ data: ratings.map(r => r.rating), backgroundColor: ratings.map(r => colors[(r.season - 1) % colors.length] + '99'), borderColor: ratings.map(r => colors[(r.season - 1) % colors.length]), borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { title: i => `${ratings[i[0].dataIndex].label} - ${ratings[i[0].dataIndex].name}`, label: i => `${i.raw.toFixed(1)}/10` } } }, scales: { y: { min: 0, max: 10 }, x: { ticks: { maxRotation: 90, font: { size: 9 } } } } } });
 }
 
 // ===== BUILD HELPERS =====
@@ -2386,9 +2423,8 @@ async function applyBulkEditDates(docId) {
     } catch (e) { logError('Bulk edit dates', e); if (statusEl) statusEl.innerHTML = `<p style="color:var(--red);font-size:13px;">✗ Failed to save.</p>`; }
 }
 
-// ===== TOGGLE HIDE / ALLOW UNAIRED =====
+// ===== TOGGLE HIDE =====
 async function toggleHideFromList(docId, type) { const item = myList.find(i => i.docId === docId); if (!item) return; item.hide_from_list = !item.hide_from_list; try { await updateDoc(doc(db, type === 'movie' ? 'movies' : 'series', docId), { hide_from_list: item.hide_from_list }); const body = document.getElementById('modal-body'); if (body && document.getElementById('modal').style.display !== 'none') { if (type === 'movie') await openMovieDetails(item, body, docId.replace(/'/g, "\\'")); else await openTVDetails(item, body, docId.replace(/'/g, "\\'")); } } catch (e) { logError('Toggle hide', e); } }
-async function toggleAllowMarkUnaired(docId) { const item = myList.find(i => i.docId === docId); if (!item) return; item.allow_mark_unaired = !item.allow_mark_unaired; try { await updateDoc(doc(db, 'series', docId), { allow_mark_unaired: item.allow_mark_unaired }); const body = document.getElementById('modal-body'); if (body && document.getElementById('modal').style.display !== 'none') await openTVDetails(item, body, docId.replace(/'/g, "\\'")); } catch (e) { logError('Toggle unaired', e); } }
 
 // ===== SEASON / EPISODE BUILD =====
 function toggleSeason(header, docId, seasonNum) { const body = header.nextElementSibling, icon = header.querySelector('.toggle-icon'), key = seasonKey(docId, seasonNum); body.classList.toggle('open'); icon.classList.toggle('open'); if (body.classList.contains('open')) expandedSeasons.add(key); else expandedSeasons.delete(key); }
@@ -2526,67 +2562,240 @@ async function toggleEpisode(docId, seasonNum, episodeNum, isSpecial = false, ep
 }
 
 // ===== MARK SEASON =====
+// ===== WATCH DATE PROMPT FOR SEASON MARK =====
+async function promptSeasonWatchDate(episodes, isAnime) {
+    // Check if any episodes are missing air dates
+    const missingAirDates = episodes.filter(ep => !ep.air_date);
+    const allHaveAirDates = missingAirDates.length === 0;
+    const someHaveAirDates = episodes.some(ep => ep.air_date);
+
+    return new Promise(resolve => {
+        const dialog = document.getElementById('confirm-dialog');
+        document.getElementById('confirm-title').textContent = 'When did you watch?';
+
+        let warningHTML = '';
+        if (!allHaveAirDates && someHaveAirDates) {
+            warningHTML = `<p style="color:var(--orange);font-size:12px;margin-bottom:12px;">⚠️ ${missingAirDates.length} episode(s) have no air date — those will use incremental timing from the base date.</p>`;
+        } else if (!someHaveAirDates) {
+            warningHTML = `<p style="color:var(--orange);font-size:12px;margin-bottom:12px;">⚠️ No air dates available — only "Now" and "Custom" options apply.</p>`;
+        }
+
+        document.getElementById('confirm-message').innerHTML = warningHTML + 'Choose how to set watch dates for these episodes.';
+
+        const yesBtn = document.getElementById('confirm-yes');
+        const noBtn = document.getElementById('confirm-no');
+        const cancelBtn = document.getElementById('confirm-cancel');
+        const closeBtn = dialog.querySelector('.confirm-close');
+        const btnContainer = yesBtn.parentElement;
+
+        btnContainer.innerHTML = `
+            <div style="display:flex;flex-direction:column;gap:8px;width:100%;">
+                ${someHaveAirDates ? `
+                <button id="wd-airdate" class="confirm-btn" style="background:var(--accent);color:white;width:100%;">
+                    📅 Air Dates<br><small style="font-weight:400;font-size:11px;">Each episode marked on the day it aired</small>
+                </button>
+                <button id="wd-days-after" class="confirm-btn" style="background:var(--accent2);color:white;width:100%;">
+                    📅 + X Days After Air Date<br><small style="font-weight:400;font-size:11px;">You choose how many days after each air date</small>
+                </button>` : ''}
+                <button id="wd-now" class="confirm-btn" style="background:var(--green);color:white;width:100%;">
+                    ⏱ Now (Incremental)<br><small style="font-weight:400;font-size:11px;">Last episode = now, earlier ones go back in time</small>
+                </button>
+                <button id="wd-custom" class="confirm-btn" style="background:var(--blue);color:white;width:100%;">
+                    📆 Custom Date<br><small style="font-weight:400;font-size:11px;">You pick the date for the last episode</small>
+                </button>
+                <button id="wd-cancel" class="confirm-btn" style="background:var(--surface2);color:var(--text);border:2px solid var(--border);width:100%;">
+                    ✕ Cancel
+                </button>
+            </div>`;
+
+        openModal('confirm-dialog');
+
+        const cleanup = () => {
+            closeModal('confirm-dialog');
+            btnContainer.innerHTML = `
+                <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
+                <button id="confirm-no" class="confirm-btn confirm-no">No</button>
+                <button id="confirm-cancel" class="confirm-btn confirm-cancel-btn" style="display:none;">Cancel</button>`;
+        };
+
+        document.getElementById('wd-airdate')?.addEventListener('click', () => { cleanup(); resolve({ type: 'airdate' }); });
+
+        document.getElementById('wd-days-after')?.addEventListener('click', async () => {
+            cleanup();
+            const days = prompt('How many days after each air date?\n(Enter 0 for same day as air date)', '0');
+            if (days === null) { resolve({ type: 'cancel' }); return; }
+            const d = parseInt(days);
+            if (isNaN(d) || d < 0) { alert('Please enter a valid number (0 or more).'); resolve({ type: 'cancel' }); return; }
+            resolve({ type: 'days-after', days: d });
+        });
+
+        document.getElementById('wd-now')?.addEventListener('click', () => { cleanup(); resolve({ type: 'now' }); });
+
+        document.getElementById('wd-custom')?.addEventListener('click', async () => {
+            cleanup();
+            // Show a simple date+time picker via another confirm
+            const dateStr = prompt('Enter the date for the LAST episode:\n(Format: YYYY-MM-DD, e.g. 2025-08-06)', new Date().toISOString().split('T')[0]);
+            if (!dateStr) { resolve({ type: 'cancel' }); return; }
+            const timeStr = prompt('Enter the time for the last episode:\n(24-hour format HH:MM, e.g. 23:00)', '23:00');
+            if (!timeStr) { resolve({ type: 'cancel' }); return; }
+            const baseDate = new Date(`${dateStr}T${timeStr}:00`);
+            if (isNaN(baseDate.getTime())) { alert('Invalid date or time entered.'); resolve({ type: 'cancel' }); return; }
+            resolve({ type: 'custom', baseDate: baseDate.toISOString() });
+        });
+
+        document.getElementById('wd-cancel')?.addEventListener('click', () => { cleanup(); resolve({ type: 'cancel' }); });
+        closeBtn?.addEventListener('click', () => { cleanup(); resolve({ type: 'cancel' }); });
+    });
+}
+
+// Apply watch date choice to an array of episodes
+function applyWatchDateChoice(episodes, dateChoice, isAnime) {
+    // episodes: array of ep objects to mark, in ORDER (first ep first, last ep last)
+    const count = episodes.length;
+
+    if (dateChoice.type === 'airdate') {
+        episodes.forEach(ep => {
+            const watchDate = ep.air_date
+                ? new Date(ep.air_date + 'T23:00:00').toISOString()
+                : new Date().toISOString(); // fallback for missing air date
+            ep.watched_at = watchDate;
+        });
+        return;
+    }
+
+    if (dateChoice.type === 'days-after') {
+        const daysAfter = dateChoice.days || 0;
+        episodes.forEach(ep => {
+            if (ep.air_date) {
+                const d = new Date(ep.air_date);
+                d.setDate(d.getDate() + daysAfter);
+                d.setHours(23, 0, 0, 0);
+                ep.watched_at = d.toISOString();
+            } else {
+                ep.watched_at = new Date().toISOString(); // fallback
+            }
+        });
+        return;
+    }
+
+    if (dateChoice.type === 'now' || dateChoice.type === 'custom') {
+        const baseDate = dateChoice.type === 'custom' ? dateChoice.baseDate : null;
+        const timestamps = generateIncrementalTimestamps(count, isAnime, baseDate ? new Date(baseDate) : new Date());
+        episodes.forEach((ep, idx) => { ep.watched_at = timestamps[idx]; });
+        return;
+    }
+}
+
 async function markSeasonWatched(docId, seasonNum) {
     const item = myList.find(i => i.docId === docId); if (!item) return;
     const season = item.seasons.find(s => s.number === seasonNum); if (!season) return;
     const today = new Date(); today.setHours(23, 59, 59, 999);
+
     const regularEps = (season.episodes || []).filter(ep => {
         if (ep.is_special || isPlaceholderEpisode(ep)) return false;
         const air = ep.air_date ? new Date(ep.air_date) : null;
         if (air && air > today) return false;
         return true;
     });
-    const allWatched = regularEps.every(e => e.is_watched) && regularEps.length > 0;
+
+    if (regularEps.length === 0) return;
+
+    const allWatched = regularEps.every(e => e.is_watched);
     activeDetailTab = 'episodes-tab';
 
     if (allWatched) {
+        // === ALL ALREADY WATCHED — offer rewatch/unmark/undo ===
         const hasRewatches = regularEps.some(ep => (ep.rewatch_count || 0) > 0);
         const a = hasRewatches
             ? await showRewatchSeasonConfirm()
             : await showConfirm('All Watched', 'What to do?', '↺ Rewatch All', '✗ Unmark All');
 
+        if (a === 'cancel') return;
+
         if (a === 'yes' || a === 'rewatch') {
-            const ts = generateIncrementalTimestamps(regularEps.length, item.is_anime);
-            regularEps.forEach((ep, idx) => { ep.rewatch_count = (ep.rewatch_count || 0) + 1; if (!ep.rewatch_history) ep.rewatch_history = []; ep.rewatch_history.push(ts[idx]); ep.watched_at = ts[idx]; });
+            // Rewatch all — ask for watch dates
+            const dateChoice = await promptSeasonWatchDate(regularEps, item.is_anime);
+            if (dateChoice.type === 'cancel') return;
+
+            const rewatchEps = [...regularEps]; // copy in order
+            rewatchEps.forEach(ep => {
+                ep.rewatch_count = (ep.rewatch_count || 0) + 1;
+                if (!ep.rewatch_history) ep.rewatch_history = [];
+            });
+            applyWatchDateChoice(rewatchEps, dateChoice, item.is_anime);
+            rewatchEps.forEach(ep => {
+                ep.rewatch_history.push(ep.watched_at);
+            });
+
         } else if (a === 'no' || a === 'unmark') {
+            // Unmark all
             regularEps.forEach(ep => { ep.is_watched = false; ep.watched_at = null; });
+
         } else if (a === 'undo-rewatch') {
+            // Undo last rewatch cycle
             regularEps.forEach(ep => {
                 if ((ep.rewatch_count || 0) > 0) {
                     ep.rewatch_count--;
                     if (ep.rewatch_history?.length) ep.rewatch_history.pop();
-                    if (ep.rewatch_history?.length) ep.watched_at = ep.rewatch_history[ep.rewatch_history.length - 1];
+                    ep.watched_at = ep.rewatch_history?.length
+                        ? ep.rewatch_history[ep.rewatch_history.length - 1]
+                        : ep.watched_at; // keep original watch date
                 }
             });
-        } else return;
-        if (seasonNum !== 0) {
-            const prevSeasons = item.seasons.filter(s => s.number !== 0 && s.number < seasonNum && s.episodes?.some(e => !e.is_watched && !e.is_special && !isPlaceholderEpisode(e)));
-            if (prevSeasons.length > 0) {
-                const a = await showConfirm('Previous Seasons?', `${prevSeasons.length} season(s) have unwatched episodes.`, 'Mark all prev', 'Just this');
-                if (a === 'yes') {
-                    const allPrevEps = []; prevSeasons.forEach(s => s.episodes.filter(ep => !ep.is_special && !ep.is_watched && !isPlaceholderEpisode(ep)).forEach(ep => allPrevEps.push({ s, ep })));
-                    const unwatchedCurrent = regularEps.filter(ep => !ep.is_watched);
-                    const total = allPrevEps.length + unwatchedCurrent.length;
-                    const ts = generateIncrementalTimestamps(total, item.is_anime);
-                    let idx = 0; allPrevEps.forEach(({ ep }) => { ep.is_watched = true; ep.watched_at = ts[idx++]; });
-                    unwatchedCurrent.forEach(ep => { ep.is_watched = true; ep.watched_at = ts[idx++]; });
-                } else if (a === 'no') {
-                    const unwatched = regularEps.filter(ep => !ep.is_watched);
-                    const ts = generateIncrementalTimestamps(unwatched.length, item.is_anime);
-                    unwatched.forEach((ep, idx) => { ep.is_watched = true; ep.watched_at = ts[idx]; });
-                } else return;
-            } else {
-                const unwatched = regularEps.filter(ep => !ep.is_watched);
-                const ts = generateIncrementalTimestamps(unwatched.length, item.is_anime);
-                unwatched.forEach((ep, idx) => { ep.is_watched = true; ep.watched_at = ts[idx]; });
-            }
-        } else {
-            const unwatched = regularEps.filter(ep => !ep.is_watched);
-            const ts = generateIncrementalTimestamps(unwatched.length, item.is_anime);
-            unwatched.forEach((ep, idx) => { ep.is_watched = true; ep.watched_at = ts[idx]; });
         }
+
+    } else {
+        // === NOT ALL WATCHED — mark unwatched ones ===
+        const unwatchedEps = regularEps.filter(ep => !ep.is_watched);
+
+        // Confirm before marking
+        const confirm = await showConfirm(
+            'Mark Season Watched?',
+            `Mark all ${unwatchedEps.length} unwatched episode${unwatchedEps.length !== 1 ? 's' : ''} in Season ${seasonNum} as watched?`,
+            'Yes', 'Cancel'
+        );
+        if (confirm !== 'yes') return;
+
+        // Check for previous unwatched seasons
+        const prevUnwatchedSeasons = item.seasons.filter(s =>
+            s.number !== 0 && s.number < seasonNum &&
+            s.episodes?.some(e => !e.is_watched && !e.is_special && !isPlaceholderEpisode(e))
+        );
+
+        let markPrevious = false;
+        if (prevUnwatchedSeasons.length > 0) {
+            const prevCount = prevUnwatchedSeasons.reduce((sum, s) =>
+                sum + s.episodes.filter(e => !e.is_watched && !e.is_special && !isPlaceholderEpisode(e)).length, 0);
+            const prevAnswer = await showConfirm(
+                'Previous Seasons?',
+                `${prevCount} unwatched episode(s) in earlier seasons. Mark those too?`,
+                'Yes, all', 'Just this season'
+            );
+            if (prevAnswer === 'cancel') return;
+            markPrevious = prevAnswer === 'yes';
+        }
+
+        // Collect all episodes to mark (in chronological order)
+        const allToMark = [];
+        if (markPrevious) {
+            prevUnwatchedSeasons.forEach(s => {
+                s.episodes
+                    .filter(e => !e.is_watched && !e.is_special && !isPlaceholderEpisode(e))
+                    .forEach(e => allToMark.push(e));
+            });
+        }
+        unwatchedEps.forEach(e => allToMark.push(e));
+
+        // Ask for watch dates
+        const dateChoice = await promptSeasonWatchDate(allToMark, item.is_anime);
+        if (dateChoice.type === 'cancel') return;
+
+        // Mark as watched and apply dates
+        allToMark.forEach(ep => { ep.is_watched = true; });
+        applyWatchDateChoice(allToMark, dateChoice, item.is_anime);
     }
 
+    // Save and re-render
     try {
         await syncMarkToOtherStructure(item, getEpisodeSource());
         await saveDualSeasons(item);
@@ -2635,7 +2844,7 @@ async function addToList(tmdbId, type, title, year, poster) {
             data.genres = (det.genres || []).map(g => g.name); data.original_language = det.original_language || null;
             data.networks = (det.networks || []).map(n => n.name); data.origin_country = det.origin_country || [];
             data.popularity = det.popularity || null; data.my_rating = null;
-            data.allow_mark_unaired = false; data.force_tmdb_source = false;
+            data.force_tmdb_source = false;
             data.year = det.first_air_date ? parseInt(det.first_air_date.substring(0, 4)) : null;
             data.tvmaze_id = null; data.tvdb_id = null;
             data.seasons = []; data.seasons_tmdb = null; data.seasons_tvmaze = null; data.episode_map = [];
@@ -3023,6 +3232,10 @@ function openStatsPage(section) {
 }
 
 function renderStats(section) {
+// Destroy all existing stat charts before rebuilding
+['stats-status-chart','stats-monthly-chart','stats-dow-chart','stats-genre-chart'].forEach(id => {
+    if (activeCharts[id]) { activeCharts[id].destroy(); delete activeCharts[id]; }
+});
     document.querySelectorAll('.stats-tab-btn').forEach(b => { b.classList.remove('active'); if ((section === 'anime' && b.textContent.includes('Anime')) || (section === 'tv' && b.textContent.includes('TV')) || (section === 'movies' && b.textContent.includes('Movies'))) b.classList.add('active'); });
     const container = document.getElementById('stats-body'); if (!container) return;
     if (section === 'movies') { renderMovieStats(container); return; }
@@ -3217,13 +3430,16 @@ function renderStats(section) {
     ${topGenres.length ? `<div class="stats-chart-container"><h4>🎭 Top Genres</h4><canvas id="stats-genre-chart"></canvas></div>` : ''}`;
 
     const colorMap = { 'Watching': '#FFC107', 'Up to Date': '#4CAF50', 'Finished': '#2196F3', 'Dropped': '#f44336', 'Paused': '#FF9800', 'Planned': '#9E9E9E', 'Rewatching': '#9C27B0', 'Unknown': '#666' };
-    const sc = document.getElementById('stats-status-chart'); if (sc) new Chart(sc.getContext('2d'), { type: 'doughnut', data: { labels: Object.keys(statusCounts), datasets: [{ data: Object.values(statusCounts), backgroundColor: Object.keys(statusCounts).map(s => colorMap[s] || '#666') }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } } });
-    const mc = document.getElementById('stats-monthly-chart'); if (mc && monthKeys.length) { const last12 = monthKeys.slice(-12); const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; new Chart(mc.getContext('2d'), { type: 'bar', data: { labels: last12.map(k => { const [y, m] = k.split('-'); return `${months[parseInt(m) - 1]} ${y.slice(2)}`; }), datasets: [{ label: 'Episodes', data: last12.map(k => monthCounts[k] || 0), backgroundColor: 'rgba(30,60,114,0.6)', borderColor: 'rgba(30,60,114,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } }); }
-    const dc = document.getElementById('stats-dow-chart'); if (dc) new Chart(dc.getContext('2d'), { type: 'bar', data: { labels: dayNames, datasets: [{ label: 'Episodes', data: dayOfWeekCounts, backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#FF6384'], borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } });
-    const gc = document.getElementById('stats-genre-chart'); if (gc && topGenres.length) new Chart(gc.getContext('2d'), { type: 'bar', data: { labels: topGenres.map(([g]) => g), datasets: [{ label: 'Shows', data: topGenres.map(([, c]) => c), backgroundColor: 'rgba(255,107,53,0.7)', borderColor: 'rgba(255,107,53,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } }, indexAxis: 'y' } });
+const sc = document.getElementById('stats-status-chart'); if (sc) activeCharts['stats-status-chart'] = new Chart(sc.getContext('2d'), { type: 'doughnut', data: { labels: Object.keys(statusCounts), datasets: [{ data: Object.values(statusCounts), backgroundColor: Object.keys(statusCounts).map(s => colorMap[s] || '#666') }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } } });
+const mc = document.getElementById('stats-monthly-chart'); if (mc && monthKeys.length) { const last12 = monthKeys.slice(-12); const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; activeCharts['stats-monthly-chart'] = new Chart(mc.getContext('2d'), { type: 'bar', data: { labels: last12.map(k => { const [y, m] = k.split('-'); return `${months[parseInt(m) - 1]} ${y.slice(2)}`; }), datasets: [{ label: 'Episodes', data: last12.map(k => monthCounts[k] || 0), backgroundColor: 'rgba(30,60,114,0.6)', borderColor: 'rgba(30,60,114,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } }); }
+const dc = document.getElementById('stats-dow-chart'); if (dc) activeCharts['stats-dow-chart'] = new Chart(dc.getContext('2d'), { type: 'bar', data: { labels: dayNames, datasets: [{ label: 'Episodes', data: dayOfWeekCounts, backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#FF6384'], borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } });
+const gc = document.getElementById('stats-genre-chart'); if (gc && topGenres.length) activeCharts['stats-genre-chart'] = new Chart(gc.getContext('2d'), { type: 'bar', data: { labels: topGenres.map(([g]) => g), datasets: [{ label: 'Shows', data: topGenres.map(([, c]) => c), backgroundColor: 'rgba(255,107,53,0.7)', borderColor: 'rgba(255,107,53,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } }, indexAxis: 'y' } });
 }
 
 function renderMovieStats(container) {
+['stats-monthly-chart','stats-dow-chart','stats-genre-chart'].forEach(id => {
+    if (activeCharts[id]) { activeCharts[id].destroy(); delete activeCharts[id]; }
+});
     const movies = getMovies(), watched = movies.filter(m => m.is_watched), rewatched = movies.reduce((s, m) => s + (m.rewatch_count || 0), 0);
     const twoMonthsAgo = new Date(Date.now() - 60 * 86400000);
     const thisMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -3274,9 +3490,9 @@ function renderMovieStats(container) {
     <div class="stats-chart-container"><h4>📆 Day of Week</h4><canvas id="stats-dow-chart"></canvas></div>
     ${topGenres.length ? `<div class="stats-chart-container"><h4>🎭 Top Genres</h4><canvas id="stats-genre-chart"></canvas></div>` : ''}`;
 
-    const mc = document.getElementById('stats-monthly-chart'); if (mc && monthKeys.length) { const last12 = monthKeys.slice(-12); const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; new Chart(mc.getContext('2d'), { type: 'bar', data: { labels: last12.map(k => { const [y, m] = k.split('-'); return `${months[parseInt(m) - 1]} ${y.slice(2)}`; }), datasets: [{ label: 'Movies', data: last12.map(k => monthCounts[k] || 0), backgroundColor: 'rgba(156,39,176,0.6)', borderColor: 'rgba(156,39,176,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } }); }
-    const dc = document.getElementById('stats-dow-chart'); if (dc) new Chart(dc.getContext('2d'), { type: 'bar', data: { labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], datasets: [{ label: 'Movies', data: dayOfWeekCounts, backgroundColor: 'rgba(156,39,176,0.4)', borderColor: 'rgba(156,39,176,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } });
-    const gc = document.getElementById('stats-genre-chart'); if (gc && topGenres.length) new Chart(gc.getContext('2d'), { type: 'bar', data: { labels: topGenres.map(([g]) => g), datasets: [{ label: 'Movies', data: topGenres.map(([, c]) => c), backgroundColor: 'rgba(156,39,176,0.6)', borderColor: 'rgba(156,39,176,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } }, indexAxis: 'y' } });
+const mc = document.getElementById('stats-monthly-chart'); if (mc && monthKeys.length) { const last12 = monthKeys.slice(-12); const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; activeCharts['stats-monthly-chart'] = new Chart(mc.getContext('2d'), { type: 'bar', data: { labels: last12.map(k => { const [y, m] = k.split('-'); return `${months[parseInt(m) - 1]} ${y.slice(2)}`; }), datasets: [{ label: 'Movies', data: last12.map(k => monthCounts[k] || 0), backgroundColor: 'rgba(156,39,176,0.6)', borderColor: 'rgba(156,39,176,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } }); }
+const dc = document.getElementById('stats-dow-chart'); if (dc) activeCharts['stats-dow-chart'] = new Chart(dc.getContext('2d'), { type: 'bar', data: { labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], datasets: [{ label: 'Movies', data: dayOfWeekCounts, backgroundColor: 'rgba(156,39,176,0.4)', borderColor: 'rgba(156,39,176,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } } });
+const gc = document.getElementById('stats-genre-chart'); if (gc && topGenres.length) activeCharts['stats-genre-chart'] = new Chart(gc.getContext('2d'), { type: 'bar', data: { labels: topGenres.map(([g]) => g), datasets: [{ label: 'Movies', data: topGenres.map(([, c]) => c), backgroundColor: 'rgba(156,39,176,0.6)', borderColor: 'rgba(156,39,176,1)', borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } }, indexAxis: 'y' } });
 }
 
 // ===== EXPORTS =====
@@ -3334,7 +3550,7 @@ function downloadFile(name, content, type) { const a = document.createElement('a
 // ===== IMPORT =====
 async function importMovies() { const jsonText = document.getElementById('movies-json').value; const st = document.getElementById('import-status'); try { const movies = JSON.parse(jsonText); let imp = 0, fail = 0; st.className = 'success'; st.textContent = `Importing... 0/${movies.length}`; for (const movie of movies) { try { const docId = `movie_${movie.id?.tvdb || movie.id?.imdb || movie.tmdb_id || Date.now()}`; let poster = PLACEHOLDER_POSTER, tmdbId = null, tmdbRating = null; if (movie.id?.imdb) { try { const d = await tmdbFetch(`${TMDB_BASE_URL}/find/${movie.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`); if (d.movie_results?.length) { tmdbId = d.movie_results[0].id; poster = d.movie_results[0].poster_path ? TMDB_IMG_BASE + d.movie_results[0].poster_path : poster; tmdbRating = d.movie_results[0].vote_average || null; } } catch (e) {} } if (!tmdbId && movie.title) { try { const d = await tmdbFetch(`${TMDB_BASE_URL}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(movie.title)}&year=${movie.year || ''}`); if (d.results?.length) { tmdbId = d.results[0].id; poster = d.results[0].poster_path ? TMDB_IMG_BASE + d.results[0].poster_path : poster; tmdbRating = d.results[0].vote_average || null; } } catch (e) {} } await setDoc(doc(db, 'movies', docId), { tmdb_id: tmdbId, imdb_id: movie.id?.imdb || null, tvdb_id: movie.id?.tvdb || null, title: movie.title, year: movie.year || null, poster, tmdb_rating: tmdbRating, is_watched: movie.is_watched || false, watched_at: movie.watched_at || null, is_favorite: movie.is_favorite || false, hide_from_list: false, rewatch_count: movie.rewatch_count || 0, rewatch_history: [], my_rating: null, created_at: movie.created_at || new Date().toISOString() }); imp++; st.textContent = `${imp}/${movies.length} (${fail} failed)`; if (imp % 30 === 0) await new Promise(r => setTimeout(r, 1000)); } catch (e) { fail++; logError('Import movie', e); } } st.textContent = `✓ ${imp} imported! (${fail} failed)`; await loadMyList(); } catch (e) { st.className = 'error'; st.textContent = `✗ ${e.message}`; } }
 
-async function importSeries() { const jsonText = document.getElementById('series-json').value; const st = document.getElementById('import-status'); try { const series = JSON.parse(jsonText); let imp = 0, fail = 0; st.className = 'success'; st.textContent = `Importing... 0/${series.length}`; for (const show of series) { try { const docId = `tv_${show.id?.tvdb || show.id?.imdb || show.tmdb_id || Date.now()}`; let poster = PLACEHOLDER_POSTER, tmdbId = null, tmdbStatus = 'Unknown', tmdbRating = null, anime = false; if (show.id?.imdb) { try { const d = await tmdbFetch(`${TMDB_BASE_URL}/find/${show.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`); if (d.tv_results?.length) { tmdbId = d.tv_results[0].id; poster = d.tv_results[0].poster_path ? TMDB_IMG_BASE + d.tv_results[0].poster_path : poster; tmdbRating = d.tv_results[0].vote_average || null; } } catch (e) {} } if (!tmdbId && show.title) { try { const clean = show.title.replace(/\s*\(\d{4}\)\s*$/, ''); const d = await tmdbFetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(clean)}`); if (d.results?.length) { tmdbId = d.results[0].id; poster = d.results[0].poster_path ? TMDB_IMG_BASE + d.results[0].poster_path : poster; tmdbRating = d.results[0].vote_average || null; } } catch (e) {} } if (tmdbId) { try { const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`); tmdbStatus = det.status || 'Unknown'; anime = isAnimeShow(det); if (!tmdbRating) tmdbRating = det.vote_average || null; } catch (e) {} } const statusMap = { 'up_to_date': 'Up to Date', 'watching': 'Watching', 'watched': 'Finished', 'dropped': 'Dropped', 'on_hold': 'Paused', 'plan_to_watch': 'Planned' }; const seasons = (show.seasons || []).map(s => ({ number: s.number, is_specials: s.number === 0, episodes: (s.episodes || []).map(ep => ({ number: ep.number, name: ep.name || `Episode ${ep.number}`, air_date: ep.air_date || null, is_watched: ep.is_watched || false, watched_at: ep.watched_at || null, rewatch_count: ep.rewatch_count || 0, rewatch_history: [], is_special: s.number === 0, my_rating: null, note: null })) })); await setDoc(doc(db, 'series', docId), { tmdb_id: tmdbId, imdb_id: show.id?.imdb || null, tvdb_id: show.id?.tvdb || null, tvmaze_id: null, title: show.title, year: show.year || null, poster, tmdb_rating: tmdbRating, user_status: statusMap[show.status] || 'Watching', tmdb_status: tmdbStatus, last_status_check: new Date().toISOString(), last_synced: new Date().toISOString(), is_favorite: show.is_favorite || false, is_anime: anime, seasons, seasons_tmdb: seasons, seasons_tvmaze: null, episode_map: [], my_rating: null, hide_from_list: false, allow_mark_unaired: false, force_tmdb_source: false, created_at: show.created_at || new Date().toISOString() }); imp++; st.textContent = `${imp}/${series.length} (${fail} failed)`; if (imp % 20 === 0) await new Promise(r => setTimeout(r, 1500)); } catch (e) { fail++; logError('Import series', e); } } st.textContent = `✓ ${imp} imported! (${fail} failed)`; await loadMyList(); } catch (e) { st.className = 'error'; st.textContent = `✗ ${e.message}`; } }
+async function importSeries() { const jsonText = document.getElementById('series-json').value; const st = document.getElementById('import-status'); try { const series = JSON.parse(jsonText); let imp = 0, fail = 0; st.className = 'success'; st.textContent = `Importing... 0/${series.length}`; for (const show of series) { try { const docId = `tv_${show.id?.tvdb || show.id?.imdb || show.tmdb_id || Date.now()}`; let poster = PLACEHOLDER_POSTER, tmdbId = null, tmdbStatus = 'Unknown', tmdbRating = null, anime = false; if (show.id?.imdb) { try { const d = await tmdbFetch(`${TMDB_BASE_URL}/find/${show.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`); if (d.tv_results?.length) { tmdbId = d.tv_results[0].id; poster = d.tv_results[0].poster_path ? TMDB_IMG_BASE + d.tv_results[0].poster_path : poster; tmdbRating = d.tv_results[0].vote_average || null; } } catch (e) {} } if (!tmdbId && show.title) { try { const clean = show.title.replace(/\s*\(\d{4}\)\s*$/, ''); const d = await tmdbFetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(clean)}`); if (d.results?.length) { tmdbId = d.results[0].id; poster = d.results[0].poster_path ? TMDB_IMG_BASE + d.results[0].poster_path : poster; tmdbRating = d.results[0].vote_average || null; } } catch (e) {} } if (tmdbId) { try { const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`); tmdbStatus = det.status || 'Unknown'; anime = isAnimeShow(det); if (!tmdbRating) tmdbRating = det.vote_average || null; } catch (e) {} } const statusMap = { 'up_to_date': 'Up to Date', 'watching': 'Watching', 'watched': 'Finished', 'dropped': 'Dropped', 'on_hold': 'Paused', 'plan_to_watch': 'Planned' }; const seasons = (show.seasons || []).map(s => ({ number: s.number, is_specials: s.number === 0, episodes: (s.episodes || []).map(ep => ({ number: ep.number, name: ep.name || `Episode ${ep.number}`, air_date: ep.air_date || null, is_watched: ep.is_watched || false, watched_at: ep.watched_at || null, rewatch_count: ep.rewatch_count || 0, rewatch_history: [], is_special: s.number === 0, my_rating: null, note: null })) })); await setDoc(doc(db, 'series', docId), { tmdb_id: tmdbId, imdb_id: show.id?.imdb || null, tvdb_id: show.id?.tvdb || null, tvmaze_id: null, title: show.title, year: show.year || null, poster, tmdb_rating: tmdbRating, user_status: statusMap[show.status] || 'Watching', tmdb_status: tmdbStatus, last_status_check: new Date().toISOString(), last_synced: new Date().toISOString(), is_favorite: show.is_favorite || false, is_anime: anime, seasons, seasons_tmdb: seasons, seasons_tvmaze: null, episode_map: [], my_rating: null, hide_from_list: false, allow_mark_unaired: false, force_tmdb_source: false, created_at: show.created_at || new Date().toISOString() }); imp++; st.textContent = `${imp}/${series.length} (${fail} failed)`; if (imp % 20 === 0) await new Promise(r => setTimeout(r, 1500)); } catch (e) { fail++; logError('Import series', e); } } st.textContent = `✓ ${imp} imported! (${fail} failed) — Run "Full Library Sync" in Settings to build TVMaze episode data.`; await loadMyList(); } catch (e) { st.className = 'error'; st.textContent = `✗ ${e.message}`; } }
 
 // ===== CLOSE MODALS =====
 window.addEventListener('click', e => { [...MODAL_IDS].forEach(id => { if (e.target === document.getElementById(id)) closeModal(id); }); if (!e.target.closest('.show-options')) document.querySelectorAll('.options-menu').forEach(m => m.classList.remove('show')); });
@@ -3365,7 +3581,7 @@ window.setAccentColor = setAccentColor; window.setRewatchColor = setRewatchColor
 window.setCardStyle = setCardStyle; window.setPosterSize = setPosterSize; window.setFontSize = setFontSize; window.setEpisodeSource = setEpisodeSource;
 window.toggleSettingsGroup = toggleSettingsGroup; window.toggleImportSection = toggleImportSection;
 window.jumpToSection = jumpToSection;
-window.toggleHideFromList = toggleHideFromList; window.toggleAllowMarkUnaired = toggleAllowMarkUnaired;
+window.toggleHideFromList = toggleHideFromList;
 window.renderCollections = renderCollections; window.filterCollections = filterCollections;
 window.openCollection = openCollection; window.filterCollectionModal = filterCollectionModal;
 window.updateNavBadges = updateNavBadges; window.saveEpisodeNote = saveEpisodeNote;
