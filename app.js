@@ -1123,15 +1123,34 @@ function getAiredEpisodesOnly(seasons) {
 function getShowProgressExcludingSpecials(show) { const aired = getAiredEpisodesOnly(show.seasons); if (!aired.length) return 0; return (aired.filter(ep => ep.is_watched).length / aired.length) * 100; }
 function getReWatchProgress(show) { const aired = getAiredEpisodesOnly(show.seasons); if (!aired.length) return 0; const max = Math.max(...aired.map(ep => ep.rewatch_count || 0)); if (max === 0) return 0; return (aired.filter(ep => (ep.rewatch_count || 0) >= max).length / aired.length) * 100; }
 function getNextEpisodeExcludingSpecials(show) {
+    const now = new Date();
     const today = new Date(); today.setHours(23, 59, 59, 999);
     if (!show.seasons) return null;
+
+    // Get show's Ghana air hour (if known)
+    const atd = show.air_time_data;
+    const hasAirTime = atd && atd.source && atd.source !== 'default' && atd.time;
+    const ghanaAirHour = hasAirTime ? getGhanaAirHour(atd.time, atd.timezone) : null;
+    const currentGhanaHour = now.getHours() + now.getMinutes() / 60;
+
     for (const s of show.seasons) {
         if (s.number === 0) continue;
         for (const ep of (s.episodes || [])) {
             if (ep.is_special || ep.is_significant_special || ep.is_insignificant_special || isPlaceholderEpisode(ep)) continue;
-            // Only return aired episodes
             const air = ep.air_date ? new Date(ep.air_date) : null;
-            if (air && air > today) continue;
+
+            if (air) {
+                // Future date — skip entirely
+                if (air > today) continue;
+
+                // Airs TODAY — check if air time has passed (if we know the time)
+                const airDateStr = air.toISOString().split('T')[0];
+                const todayStr = now.toISOString().split('T')[0];
+                if (airDateStr === todayStr && ghanaAirHour !== null) {
+                    if (currentGhanaHour < ghanaAirHour) continue; // hasn't aired yet
+                }
+            }
+
             if (!ep.is_watched) return { season: s.number, number: ep.number, name: ep.name || `Episode ${ep.number}` };
         }
     }
@@ -1146,7 +1165,34 @@ function getNextReWatchEpisode(show) {
     for (const s of show.seasons) { if (s.number === 0) continue; for (const ep of (s.episodes || [])) { if (ep.is_special || isPlaceholderEpisode(ep)) continue; const air = ep.air_date ? new Date(ep.air_date) : null; if (air && air > today) continue; if ((ep.rewatch_count || 0) < target) return { season: s.number, number: ep.number, name: ep.name || `Episode ${ep.number}` }; } }
     return null;
 }
-function getRemainingEpisodes(show) { return getAiredEpisodesOnly(show.seasons).filter(ep => !ep.is_watched).length; }
+function getRemainingEpisodes(show) {
+    const now = new Date();
+    const today = new Date(); today.setHours(23, 59, 59, 999);
+
+    const atd = show.air_time_data;
+    const hasAirTime = atd && atd.source && atd.source !== 'default' && atd.time;
+    const ghanaAirHour = hasAirTime ? getGhanaAirHour(atd.time, atd.timezone) : null;
+    const currentGhanaHour = now.getHours() + now.getMinutes() / 60;
+
+    let count = 0;
+    (show.seasons || []).forEach(s => {
+        if (s.number === 0) return;
+        (s.episodes || []).forEach(ep => {
+            if (ep.is_special || ep.is_significant_special || ep.is_insignificant_special || isPlaceholderEpisode(ep)) return;
+            const air = ep.air_date ? new Date(ep.air_date) : null;
+            if (air) {
+                if (air > today) return;
+                const airDateStr = air.toISOString().split('T')[0];
+                const todayStr = now.toISOString().split('T')[0];
+                if (airDateStr === todayStr && ghanaAirHour !== null) {
+                    if (currentGhanaHour < ghanaAirHour) return;
+                }
+            }
+            if (!ep.is_watched) count++;
+        });
+    });
+    return count;
+}
 function getLastWatchedDate(show) { let last = null; show.seasons?.forEach(s => s.episodes?.forEach(ep => { if (ep.is_watched && ep.watched_at) { if (!last || new Date(ep.watched_at) > new Date(last)) last = ep.watched_at; } })); return last || show.created_at || '2000-01-01'; }
 function isCurrentlyAiring(show) {
     if (!['Returning Series', 'In Production'].includes(show.tmdb_status)) return false;
@@ -1202,8 +1248,38 @@ function autoTagStatusesSilent() {
 function updateNavBadges() {
     ['anime', 'tv'].forEach(type => { const shows = type === 'anime' ? getAnime() : getTVShows(); const badge = document.getElementById(`${type}-nav-badge`); if (!badge) return; const hasAiring = shows.some(show => isCurrentlyAiring(show) && !allAiredWatched(show)); badge.classList.toggle('visible', hasAiring); });
 }
-function allAiredWatched(show) { const aired = getAiredEpisodesOnly(show.seasons); return aired.length > 0 && aired.every(ep => ep.is_watched); }
+function allAiredWatched(show) {
+    const now = new Date();
+    const today = new Date(); today.setHours(23, 59, 59, 999);
 
+    const atd = show.air_time_data;
+    const hasAirTime = atd && atd.source && atd.source !== 'default' && atd.time;
+    const ghanaAirHour = hasAirTime ? getGhanaAirHour(atd.time, atd.timezone) : null;
+    const currentGhanaHour = now.getHours() + now.getMinutes() / 60;
+
+    let airedCount = 0;
+    let allWatched = true;
+
+    (show.seasons || []).forEach(s => {
+        if (s.number === 0) return;
+        (s.episodes || []).forEach(ep => {
+            if (ep.is_special || ep.is_significant_special || ep.is_insignificant_special || isPlaceholderEpisode(ep)) return;
+            const air = ep.air_date ? new Date(ep.air_date) : null;
+            if (air) {
+                if (air > today) return;
+                const airDateStr = air.toISOString().split('T')[0];
+                const todayStr = now.toISOString().split('T')[0];
+                if (airDateStr === todayStr && ghanaAirHour !== null) {
+                    if (currentGhanaHour < ghanaAirHour) return;
+                }
+            }
+            airedCount++;
+            if (!ep.is_watched) allWatched = false;
+        });
+    });
+
+    return airedCount > 0 && allWatched;
+}
 function renderAllSections() { renderContinueWatching('anime'); renderContinueWatching('tv'); renderHistory('anime'); renderHistory('tv'); renderMoviesSection(); renderLibrary('anime'); renderLibrary('tv'); renderLibrary('movies'); }
 
 // ===== SECTION JUMP PILLS =====
