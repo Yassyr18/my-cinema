@@ -2534,32 +2534,82 @@ async function toggleEpisode(docId, seasonNum, episodeNum, isSpecial = false, ep
     activeDetailTab = 'episodes-tab';
 
     if (ep.is_watched) {
+        // === ALREADY WATCHED ===
         const choice = await showRewatchConfirm(ep.name || 'This episode');
+
         if (choice === 'from-start') {
+            // Rewatch from start — collect all episodes needing rewatch + this one
             const needs = getEpisodesNeedingRewatch(item, seasonNum, episodeNum);
-            const total = needs.length + 1;
-            const ts = generateIncrementalTimestamps(total, item.is_anime);
-            needs.forEach(({ seasonNum: sN, episodeNum: eN }, idx) => { const s = item.seasons.find(s => s.number === sN); const e = s?.episodes.find(e => e.number === eN && !e.is_special); if (e) { e.rewatch_count = (e.rewatch_count || 0) + 1; if (!e.rewatch_history) e.rewatch_history = []; e.rewatch_history.push(ts[idx]); e.watched_at = ts[idx]; } });
-            ep.rewatch_count = (ep.rewatch_count || 0) + 1; if (!ep.rewatch_history) ep.rewatch_history = [];
-            ep.rewatch_history.push(ts[ts.length - 1]); ep.watched_at = ts[ts.length - 1];
+            const allEps = [];
+            needs.forEach(({ seasonNum: sN, episodeNum: eN }) => {
+                const s = item.seasons.find(s => s.number === sN);
+                const e = s?.episodes.find(e => e.number === eN && !e.is_special);
+                if (e) allEps.push(e);
+            });
+            allEps.push(ep);
+
+            // Ask for watch dates
+            const dateChoice = await promptSeasonWatchDate(allEps, item.is_anime);
+            if (dateChoice.type === 'cancel') return;
+
+            allEps.forEach(e => {
+                e.rewatch_count = (e.rewatch_count || 0) + 1;
+                if (!e.rewatch_history) e.rewatch_history = [];
+            });
+            applyWatchDateChoice(allEps, dateChoice, item.is_anime);
+            allEps.forEach(e => {
+                e.rewatch_history.push(e.watched_at);
+            });
+
         } else if (choice === 'just-this') {
-            ep.rewatch_count = (ep.rewatch_count || 0) + 1; if (!ep.rewatch_history) ep.rewatch_history = [];
-            ep.rewatch_history.push(new Date().toISOString()); ep.watched_at = new Date().toISOString();
-        } else if (choice === 'unmark') { ep.is_watched = false; ep.watched_at = null; }
-        else return;
+            ep.rewatch_count = (ep.rewatch_count || 0) + 1;
+            if (!ep.rewatch_history) ep.rewatch_history = [];
+            ep.rewatch_history.push(new Date().toISOString());
+            ep.watched_at = new Date().toISOString();
+
+        } else if (choice === 'unmark') {
+            ep.is_watched = false;
+            ep.watched_at = null;
+
+        } else return;
+
     } else {
+        // === NOT YET WATCHED ===
         if (!isSpecial && seasonNum !== 0) {
             const prev = getPreviousUnwatchedEpisodes(item, seasonNum, episodeNum);
             if (prev.length > 0) {
                 const a = await showMarkPreviousConfirm(prev.length);
+                if (a === 'cancel') return;
+
                 if (a === 'yes') {
-                    const ts = generateIncrementalTimestamps(prev.length + 1, item.is_anime);
-                    prev.forEach(({ seasonNum: sN, episodeNum: eN }, idx) => { const s = item.seasons.find(s => s.number === sN); const e = s?.episodes.find(e => e.number === eN && !e.is_special); if (e) { e.is_watched = true; e.watched_at = ts[idx]; } });
-                    ep.is_watched = true; ep.watched_at = ts[ts.length - 1];
-                } else if (a === 'no') { ep.is_watched = true; ep.watched_at = new Date().toISOString(); }
-                else return;
-            } else { ep.is_watched = true; ep.watched_at = new Date().toISOString(); }
-        } else { ep.is_watched = true; ep.watched_at = new Date().toISOString(); }
+                    // Collect previous + this episode
+                    const allEps = [];
+                    prev.forEach(({ seasonNum: sN, episodeNum: eN }) => {
+                        const s = item.seasons.find(s => s.number === sN);
+                        const e = s?.episodes.find(e => e.number === eN && !e.is_special);
+                        if (e) allEps.push(e);
+                    });
+                    allEps.push(ep);
+
+                    // Ask for watch dates
+                    const dateChoice = await promptSeasonWatchDate(allEps, item.is_anime);
+                    if (dateChoice.type === 'cancel') return;
+
+                    allEps.forEach(e => { e.is_watched = true; });
+                    applyWatchDateChoice(allEps, dateChoice, item.is_anime);
+
+                } else if (a === 'no') {
+                    ep.is_watched = true;
+                    ep.watched_at = new Date().toISOString();
+                }
+            } else {
+                ep.is_watched = true;
+                ep.watched_at = new Date().toISOString();
+            }
+        } else {
+            ep.is_watched = true;
+            ep.watched_at = new Date().toISOString();
+        }
     }
 
     try {
