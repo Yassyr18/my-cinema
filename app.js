@@ -3688,8 +3688,486 @@ function downloadFile(name, content, type) { const a = document.createElement('a
 // ===== IMPORT =====
 async function importMovies() { const jsonText = document.getElementById('movies-json').value; const st = document.getElementById('import-status'); try { const movies = JSON.parse(jsonText); let imp = 0, fail = 0; st.className = 'success'; st.textContent = `Importing... 0/${movies.length}`; for (const movie of movies) { try { const docId = `movie_${movie.id?.tvdb || movie.id?.imdb || movie.tmdb_id || Date.now()}`; let poster = PLACEHOLDER_POSTER, tmdbId = null, tmdbRating = null; if (movie.id?.imdb) { try { const d = await tmdbFetch(`${TMDB_BASE_URL}/find/${movie.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`); if (d.movie_results?.length) { tmdbId = d.movie_results[0].id; poster = d.movie_results[0].poster_path ? TMDB_IMG_BASE + d.movie_results[0].poster_path : poster; tmdbRating = d.movie_results[0].vote_average || null; } } catch (e) {} } if (!tmdbId && movie.title) { try { const d = await tmdbFetch(`${TMDB_BASE_URL}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(movie.title)}&year=${movie.year || ''}`); if (d.results?.length) { tmdbId = d.results[0].id; poster = d.results[0].poster_path ? TMDB_IMG_BASE + d.results[0].poster_path : poster; tmdbRating = d.results[0].vote_average || null; } } catch (e) {} } await setDoc(doc(db, 'movies', docId), { tmdb_id: tmdbId, imdb_id: movie.id?.imdb || null, tvdb_id: movie.id?.tvdb || null, title: movie.title, year: movie.year || null, poster, tmdb_rating: tmdbRating, is_watched: movie.is_watched || false, watched_at: movie.watched_at || null, is_favorite: movie.is_favorite || false, hide_from_list: false, rewatch_count: movie.rewatch_count || 0, rewatch_history: [], my_rating: null, created_at: movie.created_at || new Date().toISOString() }); imp++; st.textContent = `${imp}/${movies.length} (${fail} failed)`; if (imp % 30 === 0) await new Promise(r => setTimeout(r, 1000)); } catch (e) { fail++; logError('Import movie', e); } } st.textContent = `✓ ${imp} imported! (${fail} failed)`; await loadMyList(); } catch (e) { st.className = 'error'; st.textContent = `✗ ${e.message}`; } }
 
-async function importSeries() { const jsonText = document.getElementById('series-json').value; const st = document.getElementById('import-status'); try { const series = JSON.parse(jsonText); let imp = 0, fail = 0; st.className = 'success'; st.textContent = `Importing... 0/${series.length}`; for (const show of series) { try { const docId = `tv_${show.id?.tvdb || show.id?.imdb || show.tmdb_id || Date.now()}`; let poster = PLACEHOLDER_POSTER, tmdbId = null, tmdbStatus = 'Unknown', tmdbRating = null, anime = false; if (show.id?.imdb) { try { const d = await tmdbFetch(`${TMDB_BASE_URL}/find/${show.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`); if (d.tv_results?.length) { tmdbId = d.tv_results[0].id; poster = d.tv_results[0].poster_path ? TMDB_IMG_BASE + d.tv_results[0].poster_path : poster; tmdbRating = d.tv_results[0].vote_average || null; } } catch (e) {} } if (!tmdbId && show.title) { try { const clean = show.title.replace(/\s*\(\d{4}\)\s*$/, ''); const d = await tmdbFetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(clean)}`); if (d.results?.length) { tmdbId = d.results[0].id; poster = d.results[0].poster_path ? TMDB_IMG_BASE + d.results[0].poster_path : poster; tmdbRating = d.results[0].vote_average || null; } } catch (e) {} } if (tmdbId) { try { const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`); tmdbStatus = det.status || 'Unknown'; anime = isAnimeShow(det); if (!tmdbRating) tmdbRating = det.vote_average || null; } catch (e) {} } const statusMap = { 'up_to_date': 'Up to Date', 'watching': 'Watching', 'watched': 'Finished', 'dropped': 'Dropped', 'on_hold': 'Paused', 'plan_to_watch': 'Planned' }; const seasons = (show.seasons || []).map(s => ({ number: s.number, is_specials: s.number === 0, episodes: (s.episodes || []).map(ep => ({ number: ep.number, name: ep.name || `Episode ${ep.number}`, air_date: ep.air_date || null, is_watched: ep.is_watched || false, watched_at: ep.watched_at || null, rewatch_count: ep.rewatch_count || 0, rewatch_history: [], is_special: s.number === 0, my_rating: null, note: null })) })); await setDoc(doc(db, 'series', docId), { tmdb_id: tmdbId, imdb_id: show.id?.imdb || null, tvdb_id: show.id?.tvdb || null, tvmaze_id: null, title: show.title, year: show.year || null, poster, tmdb_rating: tmdbRating, user_status: statusMap[show.status] || 'Watching', tmdb_status: tmdbStatus, last_status_check: new Date().toISOString(), last_synced: new Date().toISOString(), is_favorite: show.is_favorite || false, is_anime: anime, seasons, seasons_tmdb: seasons, seasons_tvmaze: null, episode_map: [], my_rating: null, hide_from_list: false, allow_mark_unaired: false, force_tmdb_source: false, created_at: show.created_at || new Date().toISOString() }); imp++; st.textContent = `${imp}/${series.length} (${fail} failed)`; if (imp % 20 === 0) await new Promise(r => setTimeout(r, 1500)); } catch (e) { fail++; logError('Import series', e); } } st.textContent = `✓ ${imp} imported! (${fail} failed) — Run "Full Library Sync" in Settings to build TVMaze episode data.`; await loadMyList(); } catch (e) { st.className = 'error'; st.textContent = `✗ ${e.message}`; } }
+async function importSeries() {
+    const jsonText = document.getElementById('series-json').value;
+    const st = document.getElementById('import-status');
+    try {
+        const series = JSON.parse(jsonText);
+        st.className = 'success';
+        st.textContent = `Scanning ${series.length} shows...`;
 
+        // === PHASE 1: Scan all shows, separate into conflicts vs new ===
+        const conflicts = [];
+        const newShows = [];
+
+        for (let i = 0; i < series.length; i++) {
+            const show = series[i];
+            st.textContent = `Scanning ${i + 1}/${series.length}: ${show.title}...`;
+
+            // Find TMDB ID — priority: TVDB→TVMaze lookup, TVMaze direct, IMDB, title search
+            let tmdbId = null, poster = PLACEHOLDER_POSTER, tmdbRating = null;
+            let resolvedTvmazeId = show.id?.tvmaze || null;
+            let resolvedTvdbId = show.id?.tvdb || null;
+
+            // Step 1: TVDB ID → TVMaze lookup → get TMDB from externals
+            if (!tmdbId && resolvedTvdbId) {
+                try {
+                    const tvShow = await tvmazeFetch(`${TVMAZE_BASE}/lookup/shows?thetvdb=${resolvedTvdbId}`);
+                    if (tvShow) {
+                        if (!resolvedTvmazeId) resolvedTvmazeId = tvShow.id;
+                        if (tvShow.externals?.themoviedb) tmdbId = tvShow.externals.themoviedb;
+                        const tvPoster = tvmazePoster(tvShow);
+                        if (tvPoster) poster = tvPoster;
+                    }
+                } catch (e) { logError('Import TVDB lookup', e); }
+            }
+
+            // Step 2: TVMaze ID direct → get TMDB from externals
+            if (!tmdbId && resolvedTvmazeId) {
+                try {
+                    const tvShow = await tvmazeFetch(`${TVMAZE_BASE}/shows/${resolvedTvmazeId}`);
+                    if (tvShow) {
+                        if (tvShow.externals?.themoviedb) tmdbId = tvShow.externals.themoviedb;
+                        if (tvShow.externals?.thetvdb && !resolvedTvdbId) resolvedTvdbId = tvShow.externals.thetvdb;
+                        const tvPoster = tvmazePoster(tvShow);
+                        if (tvPoster && poster === PLACEHOLDER_POSTER) poster = tvPoster;
+                    }
+                } catch (e) { logError('Import TVMaze lookup', e); }
+            }
+
+            // Step 3: IMDB → TMDB find
+            if (!tmdbId && show.id?.imdb) {
+                try {
+                    const d = await tmdbFetch(`${TMDB_BASE_URL}/find/${show.id.imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id`);
+                    if (d.tv_results?.length) { tmdbId = d.tv_results[0].id; poster = d.tv_results[0].poster_path ? TMDB_IMG_BASE + d.tv_results[0].poster_path : poster; tmdbRating = d.tv_results[0].vote_average || null; }
+                } catch (e) {}
+            }
+
+            // Step 4: Title search → TMDB
+            if (!tmdbId && show.title) {
+                try {
+                    const clean = show.title.replace(/\s*\(\d{4}\)\s*$/, '');
+                    const d = await tmdbFetch(`${TMDB_BASE_URL}/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(clean)}`);
+                    if (d.results?.length) { tmdbId = d.results[0].id; poster = d.results[0].poster_path ? TMDB_IMG_BASE + d.results[0].poster_path : poster; tmdbRating = d.results[0].vote_average || null; }
+                } catch (e) {}
+            }
+
+            // Get TMDB poster if we found a TMDB ID (higher quality than TVMaze)
+            if (tmdbId) {
+                try {
+                    const tmdbDetail = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
+                    if (tmdbDetail.poster_path) poster = TMDB_IMG_BASE + tmdbDetail.poster_path;
+                    if (tmdbDetail.vote_average) tmdbRating = tmdbDetail.vote_average;
+                } catch (e) {}
+            }
+
+            // Build doc ID
+            const docId = tmdbId ? `tv_${tmdbId}` : `tv_${resolvedTvdbId || resolvedTvmazeId || Date.now()}`;
+            
+            // Get TMDB details
+            let tmdbStatus = 'Unknown', anime = false, detailData = {};
+            if (tmdbId) {
+                try {
+                    const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
+                    tmdbStatus = det.status || 'Unknown';
+                    anime = isAnimeShow(det);
+                    if (!tmdbRating) tmdbRating = det.vote_average || null;
+                    detailData = {
+                        genres: (det.genres || []).map(g => g.name),
+                        original_language: det.original_language || null,
+                        networks: (det.networks || []).map(n => n.name),
+                        origin_country: det.origin_country || [],
+                        popularity: det.popularity || null,
+                        year: det.first_air_date ? parseInt(det.first_air_date.substring(0, 4)) : (show.year || null)
+                    };
+                } catch (e) { logError('Import TMDB detail', e); }
+            }
+
+            // Map status
+            const statusMap = { 'up_to_date': 'Up to Date', 'watching': 'Watching', 'watched': 'Finished', 'dropped': 'Dropped', 'on_hold': 'Paused', 'plan_to_watch': 'Planned' };
+
+            // Build seasons with corrected field names
+            const seasons = (show.seasons || []).map(s => ({
+                number: s.number, is_specials: s.number === 0,
+                episodes: (s.episodes || []).map(ep => ({
+                    number: ep.number,
+                    name: ep.name || `Episode ${ep.number}`,
+                    air_date: ep.air_date || null,
+                    is_watched: ep.is_watched || false,
+                    watched_at: fixImportDate(ep.watched_at),
+                    rewatch_count: ep.rewatch_count || 0,
+                    rewatch_history: ep.rewatch_history || [],
+                    is_special: ep.special || ep.is_special || s.number === 0,
+                    my_rating: ep.my_rating || null,
+                    note: ep.note || null
+                }))
+            }));
+
+            // Count watched episodes in import data
+            let importWatchedCount = 0;
+            seasons.forEach(s => { if (s.number === 0) return; s.episodes.forEach(ep => { if (ep.is_watched && !ep.is_special) importWatchedCount++; }); });
+
+            const importData = {
+                docId,
+                tmdb_id: tmdbId,
+                imdb_id: show.id?.imdb || null,
+                tvdb_id: resolvedTvdbId || null,
+                tvmaze_id: resolvedTvmazeId || null,
+                title: show.title,
+                year: detailData.year || show.year || null,
+                poster,
+                tmdb_rating: tmdbRating,
+                user_status: statusMap[show.status] || 'Watching',
+                tmdb_status: tmdbStatus,
+                is_favorite: show.is_favorite || false,
+                is_anime: anime,
+                seasons,
+                seasons_tmdb: seasons,
+                seasons_tvmaze: null,
+                episode_map: [],
+                detailData,
+                importWatchedCount,
+                created_at: show.created_at || new Date().toISOString()
+            };
+
+            // Check if already in library
+            const existing = myList.find(i => i.docId === docId || (tmdbId && i.tmdb_id === tmdbId) || (resolvedTvdbId && i.tvdb_id === resolvedTvdbId) || (resolvedTvmazeId && i.tvmaze_id === resolvedTvmazeId));
+            
+            if (existing) {
+                // Count existing watched episodes
+                let existingWatchedCount = 0;
+                existing.seasons?.forEach(s => { if (s.number === 0) return; s.episodes?.forEach(ep => { if (ep.is_watched && !ep.is_special) existingWatchedCount++; }); });
+
+                conflicts.push({ existing, importData, existingWatchedCount, importWatchedCount, action: null });
+            } else {
+                newShows.push(importData);
+            }
+
+            await new Promise(r => setTimeout(r, 400));
+        }
+
+        // === PHASE 2: Import new shows immediately ===
+        let imported = 0, failed = 0;
+        for (const showData of newShows) {
+            try {
+                st.textContent = `Importing new: ${showData.title}...`;
+                await setDoc(doc(db, 'series', showData.docId), buildImportDoc(showData));
+                imported++;
+                await new Promise(r => setTimeout(r, 300));
+            } catch (e) { failed++; logError('Import new show', e); }
+        }
+
+        // === PHASE 3: Show conflict dialog if any ===
+        if (conflicts.length > 0) {
+            st.textContent = `${imported} new shows imported. ${conflicts.length} conflicts found — resolve below...`;
+            await showImportConflictDialog(conflicts, st);
+        } else {
+            st.textContent = `✓ ${imported} imported! (${failed} failed) — Run "Full Library Sync" in Settings to build TVMaze episode data.`;
+        }
+
+        await loadMyList();
+    } catch (e) { st.className = 'error'; st.textContent = `✗ ${e.message}`; logError('Import series', e); }
+}
+
+// === HELPER: Fix import date format ===
+function fixImportDate(dateStr) {
+    if (!dateStr) return null;
+    // Convert "2023-09-15 13:35:32" to "2023-09-15T13:35:32.000Z"
+    if (dateStr.includes(' ') && !dateStr.includes('T')) {
+        return dateStr.replace(' ', 'T') + '.000Z';
+    }
+    // Already ISO format
+    if (dateStr.includes('T')) return dateStr;
+    // Just a date
+    return dateStr + 'T00:00:00.000Z';
+}
+
+// === HELPER: Build Firestore doc from import data ===
+function buildImportDoc(showData) {
+    return {
+        tmdb_id: showData.tmdb_id,
+        imdb_id: showData.imdb_id,
+        tvdb_id: showData.tvdb_id,
+        tvmaze_id: showData.tvmaze_id,
+        title: showData.title,
+        year: showData.year,
+        poster: showData.poster,
+        tmdb_rating: showData.tmdb_rating,
+        user_status: showData.user_status,
+        tmdb_status: showData.tmdb_status,
+        last_status_check: new Date().toISOString(),
+        last_synced: new Date().toISOString(),
+        is_favorite: showData.is_favorite,
+        is_anime: showData.is_anime,
+        seasons: showData.seasons,
+        seasons_tmdb: showData.seasons_tmdb,
+        seasons_tvmaze: null,
+        episode_map: [],
+        my_rating: null,
+        hide_from_list: false,
+        force_tmdb_source: false,
+        genres: showData.detailData?.genres || [],
+        original_language: showData.detailData?.original_language || null,
+        networks: showData.detailData?.networks || [],
+        origin_country: showData.detailData?.origin_country || [],
+        popularity: showData.detailData?.popularity || null,
+        created_at: showData.created_at
+    };
+}
+
+// === HELPER: Merge two season structures ===
+function mergeSeasons(existingSeasons, importSeasons) {
+    // Start with existing seasons as base
+    const merged = JSON.parse(JSON.stringify(existingSeasons || []));
+
+    (importSeasons || []).forEach(importSeason => {
+        const existingSeason = merged.find(s => s.number === importSeason.number);
+
+        if (!existingSeason) {
+            // Season doesn't exist in current data — add it entirely
+            merged.push(JSON.parse(JSON.stringify(importSeason)));
+            return;
+        }
+
+        // Season exists — merge episode by episode
+        (importSeason.episodes || []).forEach(importEp => {
+            const existingEp = existingSeason.episodes?.find(e =>
+                e.number === importEp.number &&
+                (importEp.is_special ? e.is_special : !e.is_special)
+            );
+
+            if (!existingEp) {
+                // Episode doesn't exist — add it
+                if (!existingSeason.episodes) existingSeason.episodes = [];
+                existingSeason.episodes.push(JSON.parse(JSON.stringify(importEp)));
+                return;
+            }
+
+            // Episode exists in both — merge carefully
+            // Watch status: if either says watched, keep watched
+            if (importEp.is_watched && !existingEp.is_watched) {
+                existingEp.is_watched = true;
+                existingEp.watched_at = importEp.watched_at;
+            } else if (importEp.is_watched && existingEp.is_watched) {
+                // Both watched — keep the OLDER date (first watch)
+                if (importEp.watched_at && existingEp.watched_at) {
+                    if (new Date(importEp.watched_at) < new Date(existingEp.watched_at)) {
+                        existingEp.watched_at = importEp.watched_at;
+                    }
+                }
+            }
+
+            // Rewatch count: keep whichever is higher
+            if ((importEp.rewatch_count || 0) > (existingEp.rewatch_count || 0)) {
+                existingEp.rewatch_count = importEp.rewatch_count;
+            }
+
+            // Notes: keep existing if it has one, otherwise use import
+            if (!existingEp.note && importEp.note) {
+                existingEp.note = importEp.note;
+            }
+
+            // Rating: keep existing if it has one, otherwise use import
+            if (!existingEp.my_rating && importEp.my_rating) {
+                existingEp.my_rating = importEp.my_rating;
+            }
+
+            // Air date: fill in if missing
+            if (!existingEp.air_date && importEp.air_date) {
+                existingEp.air_date = importEp.air_date;
+            }
+        });
+    });
+
+    // Sort seasons by number
+    merged.sort((a, b) => a.number - b.number);
+    return merged;
+}
+
+// === CONFLICT DIALOG ===
+async function showImportConflictDialog(conflicts, statusEl) {
+    return new Promise(resolve => {
+        let modal = document.getElementById('import-conflict-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'import-conflict-modal';
+            modal.className = 'modal';
+            modal.style.cssText = 'z-index:3500;';
+            modal.innerHTML = `<div class="modal-content" style="max-width:700px;"><span class="close" onclick="closeModal('import-conflict-modal')">&times;</span><div id="import-conflict-body"></div></div>`;
+            document.body.appendChild(modal);
+            if (!MODAL_IDS.includes('import-conflict-modal')) MODAL_IDS.push('import-conflict-modal');
+            modal.addEventListener('click', e => { if (e.target === modal) closeModal('import-conflict-modal'); });
+        }
+
+        const body = document.getElementById('import-conflict-body');
+        body.innerHTML = `
+            <h3 style="color:var(--accent);margin-bottom:8px;">⚠️ ${conflicts.length} Show${conflicts.length !== 1 ? 's' : ''} Already in Library</h3>
+            <p style="color:var(--text2);font-size:13px;margin-bottom:16px;">Choose what to do with each conflict. Scroll down to see all.</p>
+
+            <div style="max-height:450px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;margin-bottom:16px;">
+                ${conflicts.map((c, idx) => `
+                    <div class="import-conflict-item" data-idx="${idx}" style="padding:14px;border-bottom:1px solid var(--border);">
+                        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
+                            <img src="${safePoster(c.existing.poster, 'thumb')}" style="width:40px;height:60px;object-fit:cover;border-radius:4px;" onerror="this.src='${PLACEHOLDER_THUMB}'">
+                            <div style="flex:1;">
+                                <div style="font-size:14px;font-weight:700;color:var(--text);">${c.existing.title}</div>
+                                <div style="font-size:11px;color:var(--text3);margin-top:2px;">${c.existing.year || '—'}</div>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+                            <div style="flex:1;padding:8px;background:var(--surface2);border-radius:8px;min-width:130px;">
+                                <div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;margin-bottom:4px;">Current</div>
+                                <div style="font-size:12px;color:var(--text);">${c.existingWatchedCount} eps watched</div>
+                                <div style="font-size:11px;color:var(--text3);">${c.existing.user_status || '—'} ${c.existing.my_rating ? '· ★' + c.existing.my_rating : ''}</div>
+                            </div>
+                            <div style="flex:1;padding:8px;background:var(--surface2);border-radius:8px;min-width:130px;">
+                                <div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;margin-bottom:4px;">Import</div>
+                                <div style="font-size:12px;color:var(--text);">${c.importWatchedCount} eps watched</div>
+                                <div style="font-size:11px;color:var(--text3);">${c.importData.user_status || '—'} ${c.importData.is_favorite ? '· ⭐' : ''}</div>
+                            </div>
+                        </div>
+                        <div class="conflict-action-btns" data-idx="${idx}" style="display:flex;gap:6px;flex-wrap:wrap;">
+                            <button onclick="setConflictAction(${idx},'keep')" class="conflict-btn" data-action="keep" style="flex:1;padding:7px 10px;border-radius:6px;border:2px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;min-width:80px;">Keep Current</button>
+                            <button onclick="setConflictAction(${idx},'import')" class="conflict-btn" data-action="import" style="flex:1;padding:7px 10px;border-radius:6px;border:2px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;min-width:80px;">Use Import</button>
+                            <button onclick="setConflictAction(${idx},'merge')" class="conflict-btn" data-action="merge" style="flex:1;padding:7px 10px;border-radius:6px;border:2px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;min-width:80px;">Merge</button>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:10px;">
+                <div style="width:100%;font-size:12px;color:var(--text3);margin-bottom:6px;font-weight:600;">Apply to all conflicts:</div>
+                <button onclick="setAllConflictActions('keep')" style="flex:1;padding:8px 12px;background:var(--surface);border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text);min-width:90px;">Keep All Current</button>
+                <button onclick="setAllConflictActions('import')" style="flex:1;padding:8px 12px;background:var(--surface);border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text);min-width:90px;">Import All</button>
+                <button onclick="setAllConflictActions('merge')" style="flex:1;padding:8px 12px;background:var(--surface);border:2px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text);min-width:90px;">Merge All</button>
+            </div>
+
+            <div id="import-conflict-status" style="margin-bottom:12px;"></div>
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="cancelImportConflicts()" style="padding:10px 20px;border:2px solid var(--border);background:var(--surface);color:var(--text);border-radius:8px;cursor:pointer;font-weight:600;">Cancel All</button>
+                <button onclick="confirmImportConflicts()" style="padding:10px 24px;background:var(--accent);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;">Confirm</button>
+            </div>`;
+
+        // Store conflicts data on window for the button handlers
+        window._importConflicts = conflicts;
+        window._importConflictResolve = resolve;
+        window._importConflictStatusEl = statusEl;
+
+        openModal('import-conflict-modal');
+    });
+}
+
+function setConflictAction(idx, action) {
+    window._importConflicts[idx].action = action;
+    // Update button visuals
+    const btns = document.querySelectorAll(`.conflict-action-btns[data-idx="${idx}"] .conflict-btn`);
+    btns.forEach(btn => {
+        const isActive = btn.dataset.action === action;
+        if (action === 'keep' && isActive) {
+            btn.style.background = 'var(--accent)'; btn.style.color = 'white'; btn.style.borderColor = 'var(--accent)';
+        } else if (action === 'import' && isActive) {
+            btn.style.background = 'var(--orange)'; btn.style.color = 'white'; btn.style.borderColor = 'var(--orange)';
+        } else if (action === 'merge' && isActive) {
+            btn.style.background = 'var(--green)'; btn.style.color = 'white'; btn.style.borderColor = 'var(--green)';
+        } else {
+            btn.style.background = 'var(--surface)'; btn.style.color = 'var(--text)'; btn.style.borderColor = 'var(--border)';
+        }
+    });
+}
+
+function setAllConflictActions(action) {
+    window._importConflicts.forEach((c, idx) => setConflictAction(idx, action));
+}
+
+async function confirmImportConflicts() {
+    const conflicts = window._importConflicts;
+    const statusEl = window._importConflictStatusEl;
+    const resolvePromise = window._importConflictResolve;
+
+    // Check all have actions
+    const unresolved = conflicts.filter(c => !c.action);
+    if (unresolved.length > 0) {
+        const conflictStatus = document.getElementById('import-conflict-status');
+        if (conflictStatus) conflictStatus.innerHTML = `<p style="color:var(--red);font-size:13px;">⚠️ ${unresolved.length} show${unresolved.length !== 1 ? 's' : ''} still need a choice. Scroll up to resolve.</p>`;
+        return;
+    }
+
+    let kept = 0, imported = 0, merged = 0, failed = 0;
+
+    for (const conflict of conflicts) {
+        try {
+            if (conflict.action === 'keep') {
+                // Do nothing — keep existing data
+                // But save tvmaze_id and tvdb_id if we got new ones
+                const updateData = {};
+                if (!conflict.existing.tvmaze_id && conflict.importData.tvmaze_id) updateData.tvmaze_id = conflict.importData.tvmaze_id;
+                if (!conflict.existing.tvdb_id && conflict.importData.tvdb_id) updateData.tvdb_id = conflict.importData.tvdb_id;
+                if (Object.keys(updateData).length) {
+                    await updateDoc(doc(db, 'series', conflict.existing.docId), updateData);
+                }
+                kept++;
+
+            } else if (conflict.action === 'import') {
+                // Overwrite with import data
+                await setDoc(doc(db, 'series', conflict.importData.docId), buildImportDoc(conflict.importData));
+                imported++;
+
+            } else if (conflict.action === 'merge') {
+                // Merge seasons
+                const mergedSeasons = mergeSeasons(conflict.existing.seasons, conflict.importData.seasons);
+
+                const updateData = {
+                    seasons: mergedSeasons,
+                    seasons_tmdb: mergedSeasons
+                };
+
+                // Fill in missing IDs
+                if (!conflict.existing.tvmaze_id && conflict.importData.tvmaze_id) updateData.tvmaze_id = conflict.importData.tvmaze_id;
+                if (!conflict.existing.tvdb_id && conflict.importData.tvdb_id) updateData.tvdb_id = conflict.importData.tvdb_id;
+
+                // Fill in missing metadata
+                if (!conflict.existing.genres?.length && conflict.importData.detailData?.genres?.length) updateData.genres = conflict.importData.detailData.genres;
+                if (!conflict.existing.original_language && conflict.importData.detailData?.original_language) updateData.original_language = conflict.importData.detailData.original_language;
+                if (!conflict.existing.networks?.length && conflict.importData.detailData?.networks?.length) updateData.networks = conflict.importData.detailData.networks;
+
+                // Keep existing favorite/rating, use import's created_at if older
+                if (conflict.importData.created_at && (!conflict.existing.created_at || new Date(conflict.importData.created_at) < new Date(conflict.existing.created_at))) {
+                    updateData.created_at = conflict.importData.created_at;
+                }
+
+                await updateDoc(doc(db, 'series', conflict.existing.docId), updateData);
+                merged++;
+            }
+
+            await new Promise(r => setTimeout(r, 300));
+        } catch (e) { failed++; logError('Import conflict resolve', e); }
+    }
+
+    closeModal('import-conflict-modal');
+    if (statusEl) {
+        statusEl.className = 'success';
+        statusEl.textContent = `✓ Done! Kept: ${kept}, Imported: ${imported}, Merged: ${merged}${failed ? `, Failed: ${failed}` : ''} — Run "Full Library Sync" to build TVMaze data.`;
+    }
+
+    // Cleanup
+    delete window._importConflicts;
+    delete window._importConflictResolve;
+    delete window._importConflictStatusEl;
+
+    await loadMyList();
+    if (resolvePromise) resolvePromise();
+}
+
+function cancelImportConflicts() {
+    closeModal('import-conflict-modal');
+    const statusEl = window._importConflictStatusEl;
+    if (statusEl) { statusEl.className = 'success'; statusEl.textContent = 'Import cancelled. New shows were already imported.'; }
+    delete window._importConflicts;
+    delete window._importConflictResolve;
+    delete window._importConflictStatusEl;
+    if (window._importConflictResolve) window._importConflictResolve();
+}
 // ===== CLOSE MODALS =====
 window.addEventListener('click', e => { [...MODAL_IDS].forEach(id => { if (e.target === document.getElementById(id)) closeModal(id); }); if (!e.target.closest('.show-options')) document.querySelectorAll('.options-menu').forEach(m => m.classList.remove('show')); });
 document.querySelector('#modal .close').addEventListener('click', () => closeModal('modal'));
@@ -3730,3 +4208,7 @@ window.selectAllEditDates = selectAllEditDates; window.applyBulkEditDates = appl
 window.openFixShowModal = openFixShowModal; window.runFixShowSearch = runFixShowSearch;
 window.selectFixShowResult = selectFixShowResult; window.applyFixShowData = applyFixShowData;
 window.applyTVMazeFallback = applyTVMazeFallback;
+window.setConflictAction = setConflictAction;
+window.setAllConflictActions = setAllConflictActions;
+window.confirmImportConflicts = confirmImportConflicts;
+window.cancelImportConflicts = cancelImportConflicts;
