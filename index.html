@@ -416,6 +416,18 @@
                     </label>
                 </div>
 
+                <!-- Issue 2/3: Hide up-to-date from continue -->
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row-label">Hide Caught-Up Shows</div>
+                        <div class="settings-row-desc">Hide shows with nothing to watch from the Continue tab</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="hide-uptodate-toggle" onchange="toggleHideUpToDate(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
             </div>
         </div>
 
