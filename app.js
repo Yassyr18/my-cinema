@@ -179,6 +179,7 @@ function getSetting(key) {
         showIdBadges: false,
         offlineIndicator: true,
         refreshStatus: true,
+        hideUpToDateFromContinue: true,
         pullToRefresh: true
     };
     const saved = localStorage.getItem(`setting_${key}`);
@@ -224,8 +225,10 @@ async function tmdbFetch(url) {
     if (tmdbCache[url] && Date.now() - tmdbCache[url].time < 3600000) return tmdbCache[url].data;
     const res = await fetch(url);
     if (!res.ok) {
+        // Don't throw on 404 — just return null silently
+        if (res.status === 404) return null;
         logError('TMDB fetch', new Error(`HTTP ${res.status}`), { url, httpStatus: res.status });
-        throw new Error(`TMDB HTTP ${res.status}`);
+        return null;
     }
     const data = await res.json();
     tmdbCache[url] = { data, time: Date.now() };
@@ -305,19 +308,31 @@ function snapshotWatchData(seasons) {
     const snap = {};
     (seasons || []).forEach(s => {
         (s.episodes || []).forEach(ep => {
-            const key = `S${s.number}E${ep.number}_${(ep.name || '').toLowerCase().trim()}`;
-            const keyByNum = `S${s.number}E${ep.number}`;
+            if (!ep.is_watched && !ep.my_rating && !ep.note) return; // skip empty episodes
+
             const data = {
                 is_watched: ep.is_watched || false,
                 watched_at: ep.watched_at || null,
                 rewatch_count: ep.rewatch_count || 0,
-                rewatch_history: ep.rewatch_history || [],
+                rewatch_history: ep.rewatch_history ? [...ep.rewatch_history] : [],
                 my_rating: ep.my_rating || null,
                 note: ep.note || null
             };
-            snap[key] = data;
-            // Also store by number alone as fallback
-            if (!snap[keyByNum]) snap[keyByNum] = data;
+
+            // Key 1: Season + Episode + Name (most specific)
+            const nameLower = (ep.name || '').toLowerCase().trim();
+            if (nameLower) {
+                snap[`S${s.number}E${ep.number}_${nameLower}`] = data;
+            }
+
+            // Key 2: Season + Episode number only (fallback — always set)
+            const numKey = `S${s.number}E${ep.number}`;
+            // Only set number-only key if it doesn't already exist (avoid overwriting with a different episode)
+            if (!snap[numKey]) snap[numKey] = data;
+
+            // Key 3: Just episode number globally (for shows where season mapping changes)
+            const globalKey = `E${ep.number}_${nameLower}`;
+            if (nameLower && !snap[globalKey]) snap[globalKey] = data;
         });
     });
     return snap;
@@ -328,17 +343,29 @@ function restoreWatchData(seasons, snap) {
     if (!snap || !Object.keys(snap).length) return;
     (seasons || []).forEach(s => {
         (s.episodes || []).forEach(ep => {
-            const key = `S${s.number}E${ep.number}_${(ep.name || '').toLowerCase().trim()}`;
-            const keyByNum = `S${s.number}E${ep.number}`;
-            const data = snap[key] || snap[keyByNum];
+            const nameLower = (ep.name || '').toLowerCase().trim();
+
+            // Try all three key types
+            const key1 = nameLower ? `S${s.number}E${ep.number}_${nameLower}` : null;
+            const key2 = `S${s.number}E${ep.number}`;
+            const key3 = nameLower ? `E${ep.number}_${nameLower}` : null;
+
+            const data = (key1 && snap[key1]) || snap[key2] || (key3 && snap[key3]);
             if (!data) return;
-            // Only restore if the snapshot had this episode as watched
-            // or if current ep has no watch data (don't overwrite newer data)
+
+            // Always restore watch data — never lose it
             if (data.is_watched) {
                 ep.is_watched = true;
-                ep.watched_at = ep.watched_at || data.watched_at;
+                // Preserve original watched_at — don't overwrite with newer date
+                if (!ep.watched_at || (data.watched_at && new Date(data.watched_at) < new Date(ep.watched_at))) {
+                    ep.watched_at = data.watched_at;
+                }
+                // Keep higher rewatch count
                 ep.rewatch_count = Math.max(ep.rewatch_count || 0, data.rewatch_count || 0);
-                ep.rewatch_history = data.rewatch_history?.length ? data.rewatch_history : (ep.rewatch_history || []);
+                // Keep longer rewatch history
+                if (data.rewatch_history && data.rewatch_history.length > (ep.rewatch_history || []).length) {
+                    ep.rewatch_history = [...data.rewatch_history];
+                }
             }
             if (!ep.my_rating && data.my_rating) ep.my_rating = data.my_rating;
             if (!ep.note && data.note) ep.note = data.note;
@@ -868,11 +895,14 @@ function setupAppearance() {
     updateToggle('id-badges-toggle', getSetting('showIdBadges'));
     // G19: Refresh status toggle
     updateToggle('refresh-status-toggle', getSetting('refreshStatus'));
+    updateToggle('hide-uptodate-toggle', getSetting('hideUpToDateFromContinue'));
     // G20: Offline indicator toggle
     updateToggle('offline-indicator-toggle', getSetting('offlineIndicator'));
     // G24: Restore settings groups open state
     restoreSettingsGroups();
 }
+
+function toggleHideUpToDate(val) { setSetting('hideUpToDateFromContinue', val); renderAllSections(); }
 
 function updateToggle(id, value) {
     const el = document.getElementById(id);
@@ -1220,7 +1250,7 @@ async function syncShowWithTMDB(show, det, watchSnap = null) {
         if (!det.seasons?.some(se => se.season_number === s)) continue;
         try {
             const sd = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}/season/${s}?api_key=${TMDB_API_KEY}`);
-            if (!sd.episodes?.length) continue;
+            if (!sd || !sd.episodes?.length) continue;
 
             const tmdbEpMap = {};
             sd.episodes.forEach(ep => { tmdbEpMap[ep.episode_number] = ep.name; });
@@ -2528,7 +2558,12 @@ function renderContinueWatching(sectionType) {
     const shows = isAnime ? getAnime() : getTVShows();
     const sixtyAgo = new Date(Date.now() - 60 * 86400000);
 
-    const rewatching = shows.filter(s => s.user_status === 'Rewatching');
+    const rewatching = shows.filter(s => {
+        if (s.user_status !== 'Rewatching') return false;
+        // Issue 3: If hiding caught-up, only show if there's a rewatch episode to watch
+        if (hideUpToDate && !getNextReWatchEpisode(s)) return false;
+        return true;
+    });    
     const inProgress = shows.filter(item => {
         if (['Rewatching', 'Dropped', 'Planned'].includes(item.user_status)) return false;
         if (item.user_status === 'Up to Date' && !isCurrentlyAiring(item)) return false;
@@ -2547,7 +2582,14 @@ function renderContinueWatching(sectionType) {
         return !item.seasons?.some(s => s.number !== 0 && s.episodes?.some(e => e.is_watched && !e.is_special));
     });
 
-    const airing    = inProgress.filter(s => s.user_status !== 'Paused' && isCurrentlyAiring(s) && getRemainingEpisodes(s) >= 0);
+    const hideUpToDate = getSetting('hideUpToDateFromContinue');
+    const airing    = inProgress.filter(s => {
+        if (s.user_status === 'Paused') return false;
+        if (!isCurrentlyAiring(s)) return false;
+        // Issue 2: If hiding up-to-date, only show if there's something to watch
+        if (hideUpToDate && !getNextEpisodeExcludingSpecials(s)) return false;
+        return true;
+    });
     const continueW = inProgress.filter(s => !isCurrentlyAiring(s) && s.user_status !== 'Paused' && new Date(getLastWatchedDate(s)) >= sixtyAgo);
     const stale     = inProgress.filter(s => !isCurrentlyAiring(s) && s.user_status !== 'Paused' && new Date(getLastWatchedDate(s)) < sixtyAgo);
     const paused    = inProgress.filter(s => s.user_status === 'Paused');
@@ -2933,26 +2975,38 @@ async function promptSeasonWatchDate(episodes, isAnime) {
     });
 }
 
-function applyWatchDateChoice(episodes, dateChoice, isAnime) {
+function applyWatchDateChoice(episodes, dateChoice, isAnime, isRewatch = false) {
     const count = episodes.length;
+
     if (dateChoice.type === 'airdate') {
         episodes.forEach(ep => {
-            ep.watched_at = ep.air_date
+            const newDate = ep.air_date
                 ? new Date(ep.air_date + 'T23:00:00').toISOString()
                 : new Date().toISOString();
+            if (isRewatch) {
+                ep._rewatch_date = newDate;
+            } else {
+                ep.watched_at = newDate;
+            }
         });
         return;
     }
     if (dateChoice.type === 'days-after') {
         const daysAfter = dateChoice.days || 0;
         episodes.forEach(ep => {
+            let newDate;
             if (ep.air_date) {
                 const d = new Date(ep.air_date);
                 d.setDate(d.getDate() + daysAfter);
                 d.setHours(23, 0, 0, 0);
-                ep.watched_at = d.toISOString();
+                newDate = d.toISOString();
             } else {
-                ep.watched_at = new Date().toISOString();
+                newDate = new Date().toISOString();
+            }
+            if (isRewatch) {
+                ep._rewatch_date = newDate;
+            } else {
+                ep.watched_at = newDate;
             }
         });
         return;
@@ -2960,7 +3014,13 @@ function applyWatchDateChoice(episodes, dateChoice, isAnime) {
     if (dateChoice.type === 'now' || dateChoice.type === 'custom') {
         const baseDate = dateChoice.type === 'custom' ? dateChoice.baseDate : null;
         const timestamps = generateIncrementalTimestamps(count, isAnime, baseDate ? new Date(baseDate) : new Date());
-        episodes.forEach((ep, idx) => { ep.watched_at = timestamps[idx]; });
+        episodes.forEach((ep, idx) => {
+            if (isRewatch) {
+                ep._rewatch_date = timestamps[idx];
+            } else {
+                ep.watched_at = timestamps[idx];
+            }
+        });
         return;
     }
 }
@@ -3039,19 +3099,24 @@ function showConfirm(title, message, yesText = 'Yes', noText = 'No', showCancel 
         const cancelBtn = document.getElementById('confirm-cancel');
         const closeBtn = dialog.querySelector('.confirm-close');
 
-        yesBtn.textContent = yesText; noBtn.textContent = noText;
-        // B3: Only show cancel button if explicitly requested, never show close AND cancel both
+        yesBtn.textContent = yesText;
+        noBtn.textContent = noText;
         cancelBtn.style.display = showCancel ? 'inline-block' : 'none';
         yesBtn.className = 'confirm-btn confirm-yes'; yesBtn.style.cssText = '';
         noBtn.className = 'confirm-btn confirm-no'; noBtn.style.cssText = '';
         cancelBtn.className = 'confirm-btn confirm-cancel-btn'; cancelBtn.style.cssText = '';
 
+        // B3: Hide close X — the No button serves as dismiss
+        if (closeBtn) closeBtn.style.display = 'none';
+
         openModal('confirm-dialog');
 
         const cleanup = () => {
             closeModal('confirm-dialog');
+            if (closeBtn) closeBtn.style.display = '';
             [yesBtn, noBtn, cancelBtn].forEach(b => { const c = b.cloneNode(true); b.replaceWith(c); });
-            if (closeBtn) { const c = closeBtn.cloneNode(true); closeBtn.replaceWith(c); }
+            const closeBtnAfter = dialog.querySelector('.confirm-close');
+            if (closeBtnAfter) { const c = closeBtnAfter.cloneNode(true); closeBtnAfter.replaceWith(c); }
         };
 
         document.getElementById('confirm-yes').addEventListener('click', () => { cleanup(); resolve('yes'); });
@@ -3070,29 +3135,91 @@ function showRewatchConfirm(episodeName) {
         const noBtn = document.getElementById('confirm-no');
         const cancelBtn = document.getElementById('confirm-cancel');
         const closeBtn = dialog.querySelector('.confirm-close');
+        const btnContainer = yesBtn.parentElement;
 
-        yesBtn.textContent = '↺ Rewatch from Start';
-        noBtn.textContent = '↺ Just This Episode';
-        cancelBtn.textContent = '✗ Unmark';
-        cancelBtn.style.display = 'inline-block';
-        yesBtn.className = 'confirm-btn'; yesBtn.style.cssText = 'background:var(--blue);color:white;';
-        noBtn.className = 'confirm-btn'; noBtn.style.cssText = 'background:var(--green);color:white;';
-        cancelBtn.className = 'confirm-btn confirm-cancel-btn'; cancelBtn.style.cssText = '';
+        // Build custom buttons
+        btnContainer.innerHTML = `
+            <div style="display:flex;flex-direction:column;gap:8px;width:100%;">
+                <button id="rw-from-start" class="confirm-btn" style="background:var(--blue);color:white;width:100%;">
+                    ↺ Rewatch from Start
+                </button>
+                <button id="rw-just-this" class="confirm-btn" style="background:var(--green);color:white;width:100%;">
+                    ↺ Just This Episode
+                </button>
+                <button id="rw-unmark" class="confirm-btn" style="background:var(--red);color:white;width:100%;">
+                    ✗ Unmark...
+                </button>
+                <button id="rw-dismiss" class="confirm-btn" style="background:var(--surface2);color:var(--text);border:2px solid var(--border);width:100%;">
+                    Back
+                </button>
+            </div>`;
 
+        if (closeBtn) closeBtn.style.display = 'none';
         openModal('confirm-dialog');
 
         const cleanup = () => {
             closeModal('confirm-dialog');
-            yesBtn.style.cssText = ''; noBtn.style.cssText = '';
-            [yesBtn, noBtn, cancelBtn].forEach(b => { const c = b.cloneNode(true); b.replaceWith(c); });
-            if (closeBtn) { const c = closeBtn.cloneNode(true); closeBtn.replaceWith(c); }
+            if (closeBtn) closeBtn.style.display = '';
+            btnContainer.innerHTML = `
+                <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
+                <button id="confirm-no" class="confirm-btn confirm-no">No</button>
+                <button id="confirm-cancel" class="confirm-btn confirm-cancel-btn" style="display:none;">Cancel</button>`;
         };
 
-        document.getElementById('confirm-yes').addEventListener('click', () => { cleanup(); resolve('from-start'); });
-        document.getElementById('confirm-no').addEventListener('click', () => { cleanup(); resolve('just-this'); });
-        document.getElementById('confirm-cancel').addEventListener('click', () => { cleanup(); resolve('unmark'); });
-        // B3: close button resolves as cancel (dismiss), not unmark
-        dialog.querySelector('.confirm-close')?.addEventListener('click', () => { cleanup(); resolve('cancel'); });
+        document.getElementById('rw-from-start')?.addEventListener('click', () => { cleanup(); resolve('from-start'); });
+        document.getElementById('rw-just-this')?.addEventListener('click', () => { cleanup(); resolve('just-this'); });
+        document.getElementById('rw-unmark')?.addEventListener('click', () => { cleanup(); resolve('unmark'); });
+        document.getElementById('rw-dismiss')?.addEventListener('click', () => { cleanup(); resolve('cancel'); });
+    });
+}
+
+async function showUnmarkOptionsConfirm(episodeName, hasRewatches) {
+    return new Promise(resolve => {
+        const dialog = document.getElementById('confirm-dialog');
+        document.getElementById('confirm-title').textContent = 'Unmark Options';
+        document.getElementById('confirm-message').textContent = `"${episodeName}"`;
+        const yesBtn = document.getElementById('confirm-yes');
+        const btnContainer = yesBtn.parentElement;
+        const closeBtn = dialog.querySelector('.confirm-close');
+
+        let buttonsHTML = `<div style="display:flex;flex-direction:column;gap:8px;width:100%;">`;
+
+        if (hasRewatches) {
+            buttonsHTML += `
+                <button id="um-last-rewatch" class="confirm-btn" style="background:var(--orange);color:white;width:100%;">
+                    Remove Last Rewatch Only
+                </button>`;
+        }
+
+        buttonsHTML += `
+            <button id="um-first-watch" class="confirm-btn" style="background:var(--blue);color:white;width:100%;">
+                Remove First Watch Only
+            </button>
+            <button id="um-everything" class="confirm-btn" style="background:var(--red);color:white;width:100%;">
+                Remove Everything
+            </button>
+            <button id="um-cancel" class="confirm-btn" style="background:var(--surface2);color:var(--text);border:2px solid var(--border);width:100%;">
+                Back
+            </button>
+        </div>`;
+
+        btnContainer.innerHTML = buttonsHTML;
+        if (closeBtn) closeBtn.style.display = 'none';
+        openModal('confirm-dialog');
+
+        const cleanup = () => {
+            closeModal('confirm-dialog');
+            if (closeBtn) closeBtn.style.display = '';
+            btnContainer.innerHTML = `
+                <button id="confirm-yes" class="confirm-btn confirm-yes">Yes</button>
+                <button id="confirm-no" class="confirm-btn confirm-no">No</button>
+                <button id="confirm-cancel" class="confirm-btn confirm-cancel-btn" style="display:none;">Cancel</button>`;
+        };
+
+        document.getElementById('um-last-rewatch')?.addEventListener('click', () => { cleanup(); resolve('remove-last-rewatch'); });
+        document.getElementById('um-first-watch')?.addEventListener('click', () => { cleanup(); resolve('remove-first-watch'); });
+        document.getElementById('um-everything')?.addEventListener('click', () => { cleanup(); resolve('remove-everything'); });
+        document.getElementById('um-cancel')?.addEventListener('click', () => { cleanup(); resolve('cancel'); });
     });
 }
 
@@ -3106,23 +3233,26 @@ function showMarkPreviousConfirm(count) {
         const cancelBtn = document.getElementById('confirm-cancel');
         const closeBtn = dialog.querySelector('.confirm-close');
 
-        yesBtn.textContent = 'Yes, all'; noBtn.textContent = 'Just this';
-        cancelBtn.style.display = 'none'; // B3: no cancel button here, use close X instead
+        yesBtn.textContent = 'Yes, all';
+        noBtn.textContent = 'Just this';
+        cancelBtn.style.display = 'none';
         yesBtn.className = 'confirm-btn confirm-yes'; yesBtn.style.cssText = '';
         noBtn.className = 'confirm-btn'; noBtn.style.cssText = 'background:var(--blue);color:white;';
+        if (closeBtn) closeBtn.style.display = 'none';
 
         openModal('confirm-dialog');
 
         const cleanup = () => {
             closeModal('confirm-dialog');
             noBtn.style.cssText = '';
+            if (closeBtn) closeBtn.style.display = '';
             [yesBtn, noBtn, cancelBtn].forEach(b => { const c = b.cloneNode(true); b.replaceWith(c); });
-            if (closeBtn) { const c = closeBtn.cloneNode(true); closeBtn.replaceWith(c); }
+            const closeBtnAfter = dialog.querySelector('.confirm-close');
+            if (closeBtnAfter) { const c = closeBtnAfter.cloneNode(true); closeBtnAfter.replaceWith(c); }
         };
 
         document.getElementById('confirm-yes').addEventListener('click', () => { cleanup(); resolve('yes'); });
         document.getElementById('confirm-no').addEventListener('click', () => { cleanup(); resolve('no'); });
-        dialog.querySelector('.confirm-close')?.addEventListener('click', () => { cleanup(); resolve('cancel'); });
     });
 }
 
@@ -3143,22 +3273,25 @@ function showRewatchSeasonConfirm() {
         yesBtn.className = 'confirm-btn'; yesBtn.style.cssText = 'background:var(--blue);color:white;';
         noBtn.className = 'confirm-btn'; noBtn.style.cssText = 'background:var(--red);color:white;';
         cancelBtn.className = 'confirm-btn'; cancelBtn.style.cssText = 'background:var(--orange);color:white;';
+        if (closeBtn) closeBtn.style.display = 'none';
 
         openModal('confirm-dialog');
 
         const cleanup = () => {
             closeModal('confirm-dialog');
             yesBtn.style.cssText = ''; noBtn.style.cssText = ''; cancelBtn.style.cssText = '';
+            if (closeBtn) closeBtn.style.display = '';
             [yesBtn, noBtn, cancelBtn].forEach(b => { const c = b.cloneNode(true); b.replaceWith(c); });
-            if (closeBtn) { const c = closeBtn.cloneNode(true); closeBtn.replaceWith(c); }
+            const closeBtnAfter = dialog.querySelector('.confirm-close');
+            if (closeBtnAfter) { const c = closeBtnAfter.cloneNode(true); closeBtnAfter.replaceWith(c); }
         };
 
         document.getElementById('confirm-yes').addEventListener('click', () => { cleanup(); resolve('rewatch'); });
         document.getElementById('confirm-no').addEventListener('click', () => { cleanup(); resolve('unmark'); });
         document.getElementById('confirm-cancel').addEventListener('click', () => { cleanup(); resolve('undo-rewatch'); });
-        dialog.querySelector('.confirm-close')?.addEventListener('click', () => { cleanup(); resolve('cancel'); });
     });
 }
+
 // ===== PREVIEW FROM TVMAZE =====
 async function openPreviewFromTVMaze(tvmazeId, tvdbId, tmdbId, title, year, poster) {
     hideSearchOverlay();
@@ -3750,14 +3883,22 @@ function autoScrollToLastWatched(item) {
 // ===== EPISODE RATINGS =====
 async function fetchEpisodeRatings(tmdbId, localSeasons) {
     const ratings = [];
-    const seasons = localSeasons.filter(s => s.number !== 0).slice(0, 5);
+    // Only fetch real season numbers (< 100) — skip year-based seasons
+    const seasons = localSeasons.filter(s => s.number !== 0 && s.number < 100).slice(0, 5);
     for (const s of seasons) {
         try {
             const data = await tmdbFetch(`${TMDB_BASE_URL}/tv/${tmdbId}/season/${s.number}?api_key=${TMDB_API_KEY}`);
-            data.episodes?.forEach(ep => {
-                if (ep.vote_average > 0) ratings.push({ label: `S${s.number}E${ep.episode_number}`, rating: ep.vote_average, season: s.number, episode: ep.episode_number, name: ep.name });
+            if (!data || !data.episodes) continue; // silently skip 404s
+            data.episodes.forEach(ep => {
+                if (ep.vote_average > 0) ratings.push({
+                    label: `S${s.number}E${ep.episode_number}`,
+                    rating: ep.vote_average,
+                    season: s.number,
+                    episode: ep.episode_number,
+                    name: ep.name
+                });
             });
-        } catch (e) {}
+        } catch (e) { /* silently skip */ }
     }
     return ratings;
 }
@@ -4322,8 +4463,12 @@ async function toggleEpisode(docId, seasonNum, episodeNum, isSpecial = false, ep
                 e.rewatch_count = (e.rewatch_count || 0) + 1;
                 if (!e.rewatch_history) e.rewatch_history = [];
             });
-            applyWatchDateChoice(allEps, dateChoice, item.is_anime);
-            allEps.forEach(e => { e.rewatch_history.push(e.watched_at); });
+            applyWatchDateChoice(allEps, dateChoice, item.is_anime, true);
+            allEps.forEach(e => {
+                e.rewatch_history.push(e._rewatch_date || new Date().toISOString());
+                delete e._rewatch_date;
+                // Don't touch ep.watched_at — keep original first watch date
+            });
 
         } else if (choice === 'just-this') {
             ep.rewatch_count = (ep.rewatch_count || 0) + 1;
@@ -4332,8 +4477,62 @@ async function toggleEpisode(docId, seasonNum, episodeNum, isSpecial = false, ep
             ep.watched_at = new Date().toISOString();
 
         } else if (choice === 'unmark') {
-            ep.is_watched = false;
-            ep.watched_at = null;
+            actionInProgress = false;
+            const hasRewatches = (ep.rewatch_count || 0) > 0;
+            const unmarkChoice = await showUnmarkOptionsConfirm(ep.name || 'This episode', hasRewatches);
+            actionInProgress = true;
+
+            if (unmarkChoice === 'remove-last-rewatch') {
+                if ((ep.rewatch_count || 0) > 0) {
+                    ep.rewatch_count--;
+                    if (ep.rewatch_history?.length) ep.rewatch_history.pop();
+                }
+            } else if (unmarkChoice === 'remove-first-watch') {
+                ep.is_watched = false;
+                ep.watched_at = null;
+                // Keep rewatch data if any
+            } else if (unmarkChoice === 'remove-everything') {
+                ep.is_watched = false;
+                ep.watched_at = null;
+                ep.rewatch_count = 0;
+                ep.rewatch_history = [];
+            } else {
+                actionInProgress = false;
+                return;
+            }
+
+            // Ask about previous episodes
+            if (!isSpecial && seasonNum !== 0) {
+                actionInProgress = false;
+                const applyPrev = await showConfirm(
+                    'Apply to Previous?',
+                    'Apply the same unmark action to all previous episodes in this season?',
+                    'Yes, all previous',
+                    'Just this one'
+                );
+                actionInProgress = true;
+
+                if (applyPrev === 'yes') {
+                    const prevEps = [];
+                    for (const s of item.seasons) {
+                        if (s.number === 0 || s.number > seasonNum) continue;
+                        for (const e of (s.episodes || [])) {
+                            if (e.is_special || isPlaceholderEpisode(e)) continue;
+                            if (s.number === seasonNum && e.number >= episodeNum) break;
+                            if (e.is_watched) prevEps.push(e);
+                        }
+                    }
+                    prevEps.forEach(e => {
+                        if (unmarkChoice === 'remove-last-rewatch') {
+                            if ((e.rewatch_count || 0) > 0) { e.rewatch_count--; if (e.rewatch_history?.length) e.rewatch_history.pop(); }
+                        } else if (unmarkChoice === 'remove-first-watch') {
+                            e.is_watched = false; e.watched_at = null;
+                        } else if (unmarkChoice === 'remove-everything') {
+                            e.is_watched = false; e.watched_at = null; e.rewatch_count = 0; e.rewatch_history = [];
+                        }
+                    });
+                }
+            }
 
         } else {
             actionInProgress = false;
@@ -4443,8 +4642,11 @@ async function markSeasonWatched(docId, seasonNum) {
             if (dateChoice.type === 'cancel') { actionInProgress = false; return; }
             const rewatchEps = [...regularEps];
             rewatchEps.forEach(ep => { ep.rewatch_count = (ep.rewatch_count || 0) + 1; if (!ep.rewatch_history) ep.rewatch_history = []; });
-            applyWatchDateChoice(rewatchEps, dateChoice, item.is_anime);
-            rewatchEps.forEach(ep => { ep.rewatch_history.push(ep.watched_at); });
+            applyWatchDateChoice(rewatchEps, dateChoice, item.is_anime, true);
+            rewatchEps.forEach(ep => {
+                ep.rewatch_history.push(ep._rewatch_date || new Date().toISOString());
+                delete ep._rewatch_date;
+            });
 
         } else if (a === 'no' || a === 'unmark') {
             regularEps.forEach(ep => { ep.is_watched = false; ep.watched_at = null; });
@@ -5864,14 +6066,29 @@ async function loadSectionCalendar(section) {
             const det = await tmdbFetch(`${TMDB_BASE_URL}/tv/${show.tmdb_id}?api_key=${TMDB_API_KEY}`);
             if (det.status && det.status !== show.tmdb_status) updateDoc(doc(db,'series',show.docId),{tmdb_status:det.status,last_status_check:new Date().toISOString()}).catch(()=>{});
             if (['Returning Series','In Production'].includes(det.status) && det.next_episode_to_air) {
-                const ad = det.next_episode_to_air.air_date, atd = show.air_time_data;
-                const ghanaTimeStr = (atd&&atd.source&&atd.source!=='default'&&atd.time) ? convertToGhanaTime(atd.time,atd.timezone) : null;
-                const ep = { show:show.title, poster:show.poster, docId:show.docId, season:det.next_episode_to_air.season_number, episode:det.next_episode_to_air.episode_number, name:det.next_episode_to_air.name, airDate:ad, airDateObj:new Date(ad), airTime:ghanaTimeStr };
-                if (ad===todayStr) tEps.push(ep); else if (ad>todayStr&&ad<=weekStr) wEps.push(ep); else if (ad>weekStr&&ad<=monthStr) uEps.push(ep);
+                let ad = det.next_episode_to_air.air_date;
+                const epSeason = det.next_episode_to_air.season_number;
+                const epNumber = det.next_episode_to_air.episode_number;
+
+                // Issue 7: Cross-reference with local episode data (which may have TVMaze dates)
+                const localSeason = show.seasons?.find(s => s.number === epSeason);
+                const localEp = localSeason?.episodes?.find(e => e.number === epNumber && !e.is_special);
+                if (localEp?.air_date) {
+                    ad = localEp.air_date; // Use the local (TVMaze-sourced) date
+                }
+
+                const atd = show.air_time_data;
+                const ghanaTimeStr = (atd && atd.source && atd.source !== 'default' && atd.time) ? convertToGhanaTime(atd.time, atd.timezone) : null;
+                const ep = {
+                    show: show.title, poster: show.poster, docId: show.docId,
+                    season: epSeason, episode: epNumber,
+                    name: det.next_episode_to_air.name,
+                    airDate: ad, airDateObj: new Date(ad), airTime: ghanaTimeStr
+                };
+                if (ad === todayStr) tEps.push(ep);
+                else if (ad > todayStr && ad <= weekStr) wEps.push(ep);
+                else if (ad > weekStr && ad <= monthStr) uEps.push(ep);
             }
-            await new Promise(r => setTimeout(r, 300));
-        } catch (e) { logError('Calendar check', e, { show: show.title }); }
-    }
     localStorage.setItem(`upcomingCache_${section}`, JSON.stringify({ today:tEps, week:wEps, upcoming:uEps }));
     localStorage.setItem(`upcomingCache_${section}_day`, getTodayString());
     if (todayEl) displayCalItems(todayEl, tEps, true);
@@ -6006,12 +6223,14 @@ window.setAccentColor = setAccentColor; window.setRewatchColor = setRewatchColor
 window.setCardStyle = setCardStyle; window.setPosterSize = setPosterSize; window.setFontSize = setFontSize; window.setEpisodeSource = setEpisodeSource;
 window.toggleSettingsGroup = toggleSettingsGroup; window.toggleImportSection = toggleImportSection;
 window.jumpToSection = jumpToSection;
+window.toggleHideUpToDate = toggleHideUpToDate;
 window.toggleHideFromList = toggleHideFromList;
 window.renderCollections = renderCollections; window.filterCollections = filterCollections;
 window.openCollection = openCollection; window.filterCollectionModal = filterCollectionModal;
 window.updateNavBadges = updateNavBadges; window.saveEpisodeNote = saveEpisodeNote;
 window.showEditWatchDateInline = showEditWatchDateInline; window.applyEditWatchDate = applyEditWatchDate;
 window.showRewatchSeasonConfirm = showRewatchSeasonConfirm;
+window.showUnmarkOptionsConfirm = showUnmarkOptionsConfirm;
 window.openEditDatesModal = openEditDatesModal; window.filterEditDatesList = filterEditDatesList;
 window.selectAllEditDates = selectAllEditDates; window.applyBulkEditDates = applyBulkEditDates;
 window.openFixShowModal = openFixShowModal; window.runFixShowSearch = runFixShowSearch;
