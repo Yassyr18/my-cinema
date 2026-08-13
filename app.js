@@ -2558,6 +2558,8 @@ function renderContinueWatching(sectionType) {
     const shows = isAnime ? getAnime() : getTVShows();
     const sixtyAgo = new Date(Date.now() - 60 * 86400000);
 
+    const hideUpToDate = getSetting('hideUpToDateFromContinue');
+    
     const rewatching = shows.filter(s => {
         if (s.user_status !== 'Rewatching') return false;
         // Issue 3: If hiding caught-up, only show if there's a rewatch episode to watch
@@ -2582,7 +2584,6 @@ function renderContinueWatching(sectionType) {
         return !item.seasons?.some(s => s.number !== 0 && s.episodes?.some(e => e.is_watched && !e.is_special));
     });
 
-    const hideUpToDate = getSetting('hideUpToDateFromContinue');
     const airing    = inProgress.filter(s => {
         if (s.user_status === 'Paused') return false;
         if (!isCurrentlyAiring(s)) return false;
