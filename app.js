@@ -6089,6 +6089,9 @@ async function loadSectionCalendar(section) {
                 else if (ad > todayStr && ad <= weekStr) wEps.push(ep);
                 else if (ad > weekStr && ad <= monthStr) uEps.push(ep);
             }
+            await new Promise(r => setTimeout(r, 300));
+        } catch (e) { logError('Calendar check', e, { show: show.title }); }
+    }
     localStorage.setItem(`upcomingCache_${section}`, JSON.stringify({ today:tEps, week:wEps, upcoming:uEps }));
     localStorage.setItem(`upcomingCache_${section}_day`, getTodayString());
     if (todayEl) displayCalItems(todayEl, tEps, true);
